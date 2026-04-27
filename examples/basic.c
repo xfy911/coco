@@ -36,8 +36,8 @@ int main(void) {
     coco_coro_t *coro1 = coco_create(sched, coro_func, &id1, 0);
     coco_coro_t *coro2 = coco_create(sched, coro_func, &id2, 0);
 
-    printf("Created coroutines: id1=%lu, id2=%lu\n\n",
-           coco_get_id(coro1), coco_get_id(coro2));
+    printf("Created coroutines: id1=%llu, id2=%llu\n\n",
+           (unsigned long long)coco_get_id(coro1), (unsigned long long)coco_get_id(coro2));
 
     /* 运行调度器 */
     coco_sched_run(sched);
