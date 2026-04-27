@@ -49,6 +49,9 @@ struct coco_coro {
     coco_error_cb error_cb;
 };
 
+/* 时间轮结构（前置声明） */
+typedef struct coco_timer_wheel coco_timer_wheel_t;
+
 /* 调度器结构 */
 struct coco_sched {
     coco_coro_t *current;      /* 当前运行协程 */
@@ -64,10 +67,11 @@ struct coco_sched {
     coco_ctx_t main_ctx;       /* 主上下文（调度器返回点） */
 
     uint64_t next_id;          /* 下一个协程 ID */
-};
 
-/* 时间轮结构 */
-typedef struct coco_timer_wheel coco_timer_wheel_t;
+    /* 事件循环 */
+    int poll_fd;               /* epoll/kqueue 实例 */
+    coco_timer_wheel_t *timer_wheel;  /* 时间轮 */
+};
 
 /* 上下文 API (汇编实现) */
 void coco_ctx_save(coco_ctx_t *ctx);
@@ -95,5 +99,12 @@ void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro);
 int coco_signal_init(coco_sched_t *sched);
 void coco_signal_cleanup(void);
 int coco_set_overflow_checkpoint(void);
+
+/* I/O 多路复用 API */
+int coco_poll_init(coco_sched_t *sched);
+void coco_poll_cleanup(coco_sched_t *sched);
+int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short events);
+void coco_poll_unregister(coco_sched_t *sched, int fd);
+int coco_poll_wait(coco_sched_t *sched, int timeout_ms);
 
 #endif /* COCO_INTERNAL_H */

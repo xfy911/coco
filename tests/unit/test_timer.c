@@ -18,28 +18,28 @@ void timer_callback(void *arg) {
 void test_timer_create(void) {
     printf("test_timer_create: ");
 
-    coco_timer_wheel_t *tw = coco_timer_wheel_create();
-    assert(tw != NULL);
+    coco_sched_t *sched = coco_sched_create();
+    assert(sched != NULL);
 
     coco_timer_t *timer = coco_timer(10, timer_callback, NULL);
     assert(timer != NULL);
 
-    coco_timer_wheel_destroy(tw);
+    coco_sched_destroy(sched);
     printf("PASS\n");
 }
 
 void test_timer_cancel(void) {
     printf("test_timer_cancel: ");
 
-    coco_timer_wheel_t *tw = coco_timer_wheel_create();
-    assert(tw != NULL);
+    coco_sched_t *sched = coco_sched_create();
+    assert(sched != NULL);
 
     coco_timer_t *timer = coco_timer(100, timer_callback, NULL);
     assert(timer != NULL);
 
     coco_timer_cancel(timer);
 
-    coco_timer_wheel_destroy(tw);
+    coco_sched_destroy(sched);
     printf("PASS\n");
 }
 
@@ -47,10 +47,9 @@ void test_timer_accuracy(void) {
     printf("test_timer_accuracy: ");
 
     timer_count = 0;
-    coco_timer_wheel_t *tw = coco_timer_wheel_create();
     coco_sched_t *sched = coco_sched_create();
 
-    /* 创建多个定时器 */
+    /* 使用调度器的时间轮 */
     coco_timer(5, timer_callback, NULL);
     coco_timer(5, timer_callback, NULL);
     coco_timer(5, timer_callback, NULL);
@@ -58,14 +57,13 @@ void test_timer_accuracy(void) {
     /* 模拟时间流逝 */
     usleep(10000);  /* 等待 10ms */
 
-    /* 处理 tick */
-    coco_timer_tick(tw, sched);
+    /* 处理 tick（使用调度器的时间轮） */
+    coco_timer_tick(sched->timer_wheel, sched);
 
     printf("timer_count=%d (expected >= 3)\n", timer_count);
     assert(timer_count >= 3);
 
     coco_sched_destroy(sched);
-    coco_timer_wheel_destroy(tw);
     printf("PASS\n");
 }
 

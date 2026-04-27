@@ -7,8 +7,8 @@
 #include <string.h>
 
 /* 全局调度器指针（单线程模式） */
-static coco_sched_t *g_current_sched = NULL;
-static coco_coro_t *g_current_coro = NULL;
+coco_sched_t *g_current_sched = NULL;
+coco_coro_t *g_current_coro = NULL;
 
 /* 协程入口包装函数 */
 static void coro_entry_wrapper(void *arg) {
@@ -50,10 +50,29 @@ coco_sched_t *coco_sched_create(void) {
     }
 
     sched->next_id = 1;
+    sched->poll_fd = -1;
     g_current_sched = sched;
 
     /* 初始化信号处理 */
     if (coco_signal_init(sched) != COCO_OK) {
+        free(sched->coro_table);
+        free(sched);
+        return NULL;
+    }
+
+    /* 初始化时间轮 */
+    sched->timer_wheel = coco_timer_wheel_create();
+    if (!sched->timer_wheel) {
+        coco_signal_cleanup();
+        free(sched->coro_table);
+        free(sched);
+        return NULL;
+    }
+
+    /* 初始化 I/O 多路复用 */
+    if (coco_poll_init(sched) != COCO_OK) {
+        coco_timer_wheel_destroy(sched->timer_wheel);
+        coco_signal_cleanup();
         free(sched->coro_table);
         free(sched);
         return NULL;
@@ -65,6 +84,15 @@ coco_sched_t *coco_sched_create(void) {
 void coco_sched_destroy(coco_sched_t *sched) {
     if (!sched) {
         return;
+    }
+
+    /* 清理 I/O 多路复用 */
+    coco_poll_cleanup(sched);
+
+    /* 清理时间轮 */
+    if (sched->timer_wheel) {
+        coco_timer_wheel_destroy(sched->timer_wheel);
+        sched->timer_wheel = NULL;
     }
 
     /* 清理信号处理 */
