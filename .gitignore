@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# OMC state (optional, may keep for session)
+.omc/state/
+
+# Debug
+*.dSYM/
+*.out
