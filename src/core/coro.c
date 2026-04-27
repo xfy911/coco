@@ -10,46 +10,6 @@
 static coco_sched_t *g_current_sched = NULL;
 static coco_coro_t *g_current_coro = NULL;
 
-/* 协程结构 */
-struct coco_coro {
-    uint64_t id;
-    coco_state_t state;
-    coco_ctx_t ctx;
-
-    void *stack_base;      /* 栈起始地址 */
-    void *stack_top;       /* 栈顶地址 */
-    size_t stack_size;     /* 栈大小 */
-
-    void (*entry)(void*);  /* 入口函数 */
-    void *arg;             /* 入口参数 */
-    void *result;          /* 返回值 */
-
-    coco_coro_t *next;     /* 调度链表节点 */
-    coco_coro_t *prev;
-
-    int wait_fd;           /* 等待的 fd（-1 表示无） */
-    uint64_t wake_time;    /* 定时唤醒时间（ns） */
-
-    coco_error_cb error_cb;
-};
-
-/* 调度器结构 */
-struct coco_sched {
-    coco_coro_t *current;      /* 当前运行协程 */
-
-    coco_coro_t *ready_head;   /* 运行队列（双向链表） */
-    coco_coro_t *ready_tail;
-    uint32_t ready_count;
-
-    coco_coro_t **coro_table;  /* 协程池（ID 映射） */
-    uint32_t coro_count;
-    uint32_t coro_capacity;
-
-    coco_ctx_t main_ctx;       /* 主上下文（调度器返回点） */
-
-    uint64_t next_id;          /* 下一个协程 ID */
-};
-
 /* 协程入口包装函数 */
 static void coro_entry_wrapper(void *arg) {
     coco_coro_t *coro = coco_self();
@@ -57,6 +17,21 @@ static void coro_entry_wrapper(void *arg) {
         coro->entry(coro->arg);
     }
     coco_exit(coro, NULL);
+}
+
+/* 入队：添加到尾部 */
+void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
+    coro->state = COCO_STATE_READY;
+    coro->prev = sched->ready_tail;
+    coro->next = NULL;
+
+    if (sched->ready_tail) {
+        sched->ready_tail->next = coro;
+    } else {
+        sched->ready_head = coro;
+    }
+    sched->ready_tail = coro;
+    sched->ready_count++;
 }
 
 /* === 调度器 API === */
@@ -102,21 +77,6 @@ void coco_sched_destroy(coco_sched_t *sched) {
     if (g_current_sched == sched) {
         g_current_sched = NULL;
     }
-}
-
-/* 入队：添加到尾部 */
-static void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
-    coro->state = COCO_STATE_READY;
-    coro->prev = sched->ready_tail;
-    coro->next = NULL;
-
-    if (sched->ready_tail) {
-        sched->ready_tail->next = coro;
-    } else {
-        sched->ready_head = coro;
-    }
-    sched->ready_tail = coro;
-    sched->ready_count++;
 }
 
 /* 出队：从头部取出 */

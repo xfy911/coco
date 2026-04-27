@@ -7,6 +7,7 @@
 
 #include "coco.h"
 #include <stdint.h>
+#include <stddef.h>
 
 /* 上下文结构 (与汇编对应，支持 x86-64 和 ARM64) */
 typedef struct coco_ctx {
@@ -23,8 +24,50 @@ typedef struct coco_ctx {
     void *x26;      /* offset 80 */
     void *x27;      /* offset 88 */
     void *x28;      /* offset 96 */
-    /* x86-64 使用 rbp, rbx, r12-r15 (复用部分字段) */
 } coco_ctx_t;
+
+/* 协程结构 */
+struct coco_coro {
+    uint64_t id;
+    coco_state_t state;
+    coco_ctx_t ctx;
+
+    void *stack_base;      /* 栈起始地址 */
+    void *stack_top;       /* 栈顶地址 */
+    size_t stack_size;     /* 栈大小 */
+
+    void (*entry)(void*);  /* 入口函数 */
+    void *arg;             /* 入口参数 */
+    void *result;          /* 返回值 */
+
+    struct coco_coro *next;     /* 调度链表节点 */
+    struct coco_coro *prev;
+
+    int wait_fd;           /* 等待的 fd（-1 表示无） */
+    uint64_t wake_time;    /* 定时唤醒时间（ns） */
+
+    coco_error_cb error_cb;
+};
+
+/* 调度器结构 */
+struct coco_sched {
+    coco_coro_t *current;      /* 当前运行协程 */
+
+    coco_coro_t *ready_head;   /* 运行队列（双向链表） */
+    coco_coro_t *ready_tail;
+    uint32_t ready_count;
+
+    coco_coro_t **coro_table;  /* 协程池（ID 映射） */
+    uint32_t coro_count;
+    uint32_t coro_capacity;
+
+    coco_ctx_t main_ctx;       /* 主上下文（调度器返回点） */
+
+    uint64_t next_id;          /* 下一个协程 ID */
+};
+
+/* 时间轮结构 */
+typedef struct coco_timer_wheel coco_timer_wheel_t;
 
 /* 上下文 API (汇编实现) */
 void coco_ctx_save(coco_ctx_t *ctx);
@@ -37,5 +80,15 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
 /* 栈管理 (C 实现) */
 void *coco_stack_alloc(size_t size);
 void coco_stack_free(void *stack, size_t size);
+
+/* 时间轮 API */
+coco_timer_wheel_t *coco_timer_wheel_create(void);
+void coco_timer_wheel_destroy(coco_timer_wheel_t *tw);
+coco_timer_t *coco_timer_add(coco_timer_wheel_t *tw, uint64_t delay_ms, coco_coro_t *coro);
+void coco_timer_tick(coco_timer_wheel_t *tw, coco_sched_t *sched);
+uint64_t coco_timer_wheel_next_expire(coco_timer_wheel_t *tw);
+
+/* 内部调度辅助函数 */
+void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro);
 
 #endif /* COCO_INTERNAL_H */
