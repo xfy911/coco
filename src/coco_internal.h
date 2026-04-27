@@ -5,7 +5,7 @@
 #ifndef COCO_INTERNAL_H
 #define COCO_INTERNAL_H
 
-#include "coco.h"
+#include "../include/coco.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -90,5 +90,10 @@ uint64_t coco_timer_wheel_next_expire(coco_timer_wheel_t *tw);
 
 /* 内部调度辅助函数 */
 void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro);
+
+/* 信号处理 API */
+int coco_signal_init(coco_sched_t *sched);
+void coco_signal_cleanup(void);
+int coco_set_overflow_checkpoint(void);
 
 #endif /* COCO_INTERNAL_H */

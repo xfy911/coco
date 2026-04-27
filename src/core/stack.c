@@ -4,7 +4,7 @@
  * 使用 mmap 分配栈内存，并设置 guard page 检测栈溢出。
  */
 
-#include "coco_internal.h"
+#include "../coco_internal.h"
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>

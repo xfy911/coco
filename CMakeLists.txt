@@ -31,6 +31,7 @@ set(CORE_SOURCES
     src/core/sched.c
     src/core/context.c
     src/core/stack.c
+    src/core/signal.c
 )
 
 set(TIMER_SOURCES
@@ -89,6 +90,7 @@ if(COCO_BUILD_TESTS)
         test_timer
         test_io
         test_stack
+        test_stack_overflow
     )
 
     foreach(test_name ${UNIT_TESTS})

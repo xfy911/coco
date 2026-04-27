@@ -2,7 +2,7 @@
  * context.c - 上下文切换平台分发
  */
 
-#include "coco_internal.h"
+#include "../coco_internal.h"
 #include <stdint.h>
 
 /**

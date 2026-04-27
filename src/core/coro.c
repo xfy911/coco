@@ -2,7 +2,7 @@
  * coro.c - 协程生命周期管理
  */
 
-#include "coco_internal.h"
+#include "../coco_internal.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -52,6 +52,13 @@ coco_sched_t *coco_sched_create(void) {
     sched->next_id = 1;
     g_current_sched = sched;
 
+    /* 初始化信号处理 */
+    if (coco_signal_init(sched) != COCO_OK) {
+        free(sched->coro_table);
+        free(sched);
+        return NULL;
+    }
+
     return sched;
 }
 
@@ -59,6 +66,9 @@ void coco_sched_destroy(coco_sched_t *sched) {
     if (!sched) {
         return;
     }
+
+    /* 清理信号处理 */
+    coco_signal_cleanup();
 
     /* 清理所有协程 */
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
@@ -103,12 +113,24 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     sched->current = coro;
     coro->state = COCO_STATE_RUNNING;
 
-    coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+    /* 设置溢出恢复点 */
+    if (coco_set_overflow_checkpoint() == 0) {
+        /* 正常执行 */
+        coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+    } else {
+        /* 从栈溢出恢复，coro 状态已由 handler 设置 */
+    }
 }
 
 /* 处理协程返回 */
 static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
     switch (coro->state) {
+        case COCO_STATE_CREATED:
+            /* 协程刚创建，不应该在此出现 */
+            break;
+        case COCO_STATE_RUNNING:
+            /* 协程正在运行，不应该在此出现 */
+            break;
         case COCO_STATE_READY:
             /* 协程 yield，已重新入队 */
             break;
