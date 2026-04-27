@@ -34,4 +34,8 @@ void coco_ctx_switch(coco_ctx_t *current, coco_ctx_t *target);
 /* 上下文初始化 (C 实现) */
 void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void *arg);
 
+/* 栈管理 (C 实现) */
+void *coco_stack_alloc(size_t size);
+void coco_stack_free(void *stack, size_t size);
+
 #endif /* COCO_INTERNAL_H */
