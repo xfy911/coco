@@ -194,10 +194,22 @@ int coco_sched_run(coco_sched_t *sched) {
             handle_coro_return(sched, coro);
         }
 
-        /* 如果还有协程但没有就绪的，等待 */
+        /* 如果还有协程但没有就绪的，等待 I/O 或定时器 */
         if (sched->coro_count > 0 && sched->ready_count == 0) {
-            /* TODO: 等待 I/O 事件或定时器 */
-            break;
+            /* 处理定时器 */
+            if (sched->timer_wheel) {
+                coco_timer_tick(sched->timer_wheel, sched);
+            }
+
+            /* 如果定时器唤醒了协程，继续处理 */
+            if (sched->ready_count > 0) {
+                continue;
+            }
+
+            /* 等待 I/O 事件 */
+            if (sched->poll_fd >= 0) {
+                coco_poll_wait(sched, 10);  /* 10ms timeout */
+            }
         }
     }
 

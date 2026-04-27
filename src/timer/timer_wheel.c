@@ -241,7 +241,7 @@ static void process_expired_timers(coco_timer_wheel_t *tw, coco_sched_t *sched) 
 
         if (timer->coro) {
             /* 唤醒协程 */
-            /* enqueue_ready(sched, timer->coro); */
+            enqueue_ready(sched, timer->coro);
             timer->coro->state = COCO_STATE_READY;
             timer->coro->wake_time = 0;
         } else if (timer->callback) {
