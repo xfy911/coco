@@ -1,20 +1,7 @@
 /**
- * sched.c - 调度器实现
+ * sched.c - 调度器实现（主要逻辑在 coro.c）
  */
 
-#include "coco.h"
+#include "coco_internal.h"
 
-coco_sched_t *coco_sched_create(void) {
-    return NULL;
-}
-
-void coco_sched_destroy(coco_sched_t *sched) {
-}
-
-int coco_sched_run(coco_sched_t *sched) {
-    return COCO_ERROR;
-}
-
-int coco_sched_run_once(coco_sched_t *sched) {
-    return COCO_ERROR;
-}
+/* 调度器 API 已在 coro.c 中实现 */
