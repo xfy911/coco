@@ -1,0 +1,212 @@
+{
+  "name": "C Coroutine Library Implementation",
+  "description": "实现一个生产级的 C 语言协程库，支持跨平台（Linux/macOS/Windows）",
+  "version": "1.0.0",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "项目骨架搭建",
+      "description": "创建目录结构、CMakeLists.txt、基础头文件、测试框架",
+      "priority": 1,
+      "acceptanceCriteria": [
+        "目录结构按计划创建完成（include/, src/core/, src/channel/, src/io/, src/timer/, src/platform/, tests/, examples/）",
+        "CMakeLists.txt 支持多平台编译（Linux/macOS/Windows）",
+        "include/coco.h 包含所有公共 API 定义",
+        "tests/unit/ 目录存在，包含空测试文件框架",
+        "项目可通过 cmake 配置生成"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "title": "x86-64 上下文切换汇编（Linux/macOS）",
+      "description": "实现 System V ABI 的上下文切换汇编代码",
+      "priority": 2,
+      "acceptanceCriteria": [
+        "src/platform/linux/ctx_x86_64.S 文件存在",
+        "coco_ctx_save, coco_ctx_load, coco_ctx_switch 函数汇编实现完整",
+        "寄存器保存策略正确（rbx, rbp, r12-r15 callee-saved）",
+        "栈布局符合计划说明（16B 对齐）",
+        "基准测试 bench_switch.c 存在并可运行",
+        "上下文切换性能 < 100ns（在本地测试验证）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-003",
+      "title": "栈管理实现",
+      "description": "实现 stack.c，支持 mmap + guard page",
+      "priority": 3,
+      "acceptanceCriteria": [
+        "src/core/stack.c 文件存在",
+        "coco_stack_alloc 函数实现 mmap + guard page",
+        "coco_stack_free 函数正确释放栈内存",
+        "macOS 差异处理正确（MAP_ANON vs MAP_ANONYMOUS）",
+        "栈分配测试通过（test_stack.c）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-004",
+      "title": "栈溢出信号处理（Linux/macOS）",
+      "description": "实现 SIGSEGV handler 和 sigaltstack 恢复机制",
+      "priority": 4,
+      "acceptanceCriteria": [
+        "SIGSEGV handler 使用 sigaltstack 避免死锁",
+        "Handler 可从 fault address 反查协程",
+        "siglongjmp 恢复到调度器上下文正确",
+        "溢出协程标记为 CORO_STATE_OVERFLOW",
+        "递归溢出测试通过（构造溢出场景验证检测）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-005",
+      "title": "协程生命周期实现",
+      "description": "实现 coro.c，包含创建、启动、yield、exit",
+      "priority": 5,
+      "acceptanceCriteria": [
+        "src/core/coro.c 文件存在",
+        "coco_create 函数正确创建协程并初始化栈",
+        "coco_exit 函数正确退出协程并保存结果",
+        "coco_yield 函数正确切换回调度器",
+        "coco_self 函数使用全局变量 + ASSERT_THREAD 实现",
+        "基础协程切换测试通过（test_coro.c）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-006",
+      "title": "调度器实现",
+      "description": "实现 sched.c，包含运行队列、主循环",
+      "priority": 6,
+      "acceptanceCriteria": [
+        "src/core/sched.c 文件存在",
+        "运行队列使用双向链表实现",
+        "coco_sched_run 主循环正确执行 pick -> switch -> handle return",
+        "单线程断言检查（ASSERT_THREAD）正确",
+        "多协程并发测试通过（1000 协程切换）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-007",
+      "title": "时间轮定时器实现",
+      "description": "实现 4 层时间轮定时器",
+      "priority": 7,
+      "acceptanceCriteria": [
+        "src/timer/timer_wheel.c 文件存在",
+        "4 层时间轮结构正确（精度 1ms）",
+        "coco_timer_add/coco_timer_cancel 正确添加/取消定时器",
+        "coco_timer_tick 正确处理过期定时器",
+        "定时器精度测试通过（偏差 < 5%）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-008",
+      "title": "sleep API 实现",
+      "description": "实现 coco_sleep，集成到调度器",
+      "priority": 8,
+      "acceptanceCriteria": [
+        "coco_sleep 函数正确挂起协程并注册定时器",
+        "定时唤醒后协程正确恢复执行",
+        "sleep 测试通过"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-009",
+      "title": "Linux epoll 事件循环",
+      "description": "实现 poll_linux.c",
+      "priority": 9,
+      "acceptanceCriteria": [
+        "src/io/poll_linux.c 文件存在",
+        "coco_event_loop_init 正确创建 epoll 实例",
+        "coco_event_loop_register/unregister 正确注册/注销 fd",
+        "coco_event_loop_poll 正确等待事件并唤醒协程",
+        "fd_table 映射正确维护"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-010",
+      "title": "macOS kqueue 事件循环",
+      "description": "实现 poll_macos.c",
+      "priority": 10,
+      "acceptanceCriteria": [
+        "src/io/poll_macos.c 文件存在",
+        "EVFILT_READ/EVFILT_WRITE 正确使用",
+        "kevent 注册和等待正确",
+        "macOS I/O 测试通过"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-011",
+      "title": "I/O API 实现",
+      "description": "实现 coco_read/write/accept/connect",
+      "priority": 11,
+      "acceptanceCriteria": [
+        "coco_read/write 正确处理 EAGAIN 并等待",
+        "coco_accept/connect 正确阻塞语义",
+        "I/O 就绪后协程正确恢复",
+        "echo server 测试通过（吞吐量 > 10000 req/s）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-012",
+      "title": "Channel 实现",
+      "description": "实现有缓冲和无缓冲 channel",
+      "priority": 12,
+      "acceptanceCriteria": [
+        "src/channel/channel.c 文件存在",
+        "有缓冲 channel 使用环形缓冲区",
+        "无缓冲 channel 同步语义正确",
+        "send/recv 阻塞语义正确",
+        "close 处理正确（唤醒等待者）",
+        "Channel throughput 测试 > 1M ops/s"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-013",
+      "title": "ARM64 汇编支持",
+      "description": "实现 Linux/macOS ARM64 汇编",
+      "priority": 13,
+      "acceptanceCriteria": [
+        "ctx_arm64.S 汇编正确（x19-x28, fp, lr, sp callee-saved）",
+        "Apple Silicon 测试通过（如果硬件可用）"
+      ],
+      "passes": true
+    },
+    {
+      "id": "US-014",
+      "title": "Windows x86-64 支持",
+      "description": "实现 Windows x86-64 汇编和 I/O",
+      "priority": 14,
+      "acceptanceCriteria": [
+        "ctx_x86_64.S 使用 Microsoft ABI（rdi/rsi callee-saved）",
+        "32B shadow space 正确处理",
+        "WSAPoll 实现正确",
+        "Windows 测试通过（如果环境可用）"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-015",
+      "title": "示例代码和文档",
+      "description": "创建示例代码和 README",
+      "priority": 15,
+      "acceptanceCriteria": [
+        "examples/basic.c 基础用法示例存在",
+        "examples/echo_server.c TCP echo 服务器示例存在",
+        "examples/pipeline.c Channel 管道示例存在",
+        "README.md 包含安装、API 说明、示例",
+        "所有示例可编译运行"
+      ],
+      "passes": true
+    }
+  ]
+}
