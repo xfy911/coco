@@ -75,6 +75,7 @@ add_library(coco STATIC
 )
 
 target_include_directories(coco PUBLIC include)
+target_include_directories(coco PRIVATE src)
 
 # 测试
 option(COCO_BUILD_TESTS "Build tests" ON)
