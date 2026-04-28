@@ -7,6 +7,7 @@
 #include "../coco_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 /* 外部全局变量（TLS，在 coro.c 中定义） */
 extern _Thread_local coco_sched_t *g_current_sched;
@@ -17,6 +18,7 @@ typedef struct wait_node {
     coco_coro_t *coro;
     void *value;
     struct wait_node *next;
+    bool freed_by_destroy;  /* true 表示 destroy 已释放，协程恢复时跳过 */
 } wait_node_t;
 
 /* Channel 结构 */
@@ -45,6 +47,7 @@ static wait_node_t *create_wait_node(coco_coro_t *coro, void *value) {
     }
     node->coro = coro;
     node->value = value;
+    node->freed_by_destroy = false;
     return node;
 }
 
@@ -146,8 +149,10 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     coro->state = COCO_STATE_WAITING;
     coco_yield();
 
-    /* 恢复后释放自己的等待节点 */
-    free(node);
+    /* 恢复后检查节点是否已被 destroy 释放 */
+    if (!node->freed_by_destroy) {
+        free(node);
+    }
 
     /* 检查是否被取消 */
     if (coro->cancelled) {
@@ -225,18 +230,24 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
 
     /* 检查是否被取消 */
     if (coro->cancelled) {
-        free(node);
+        if (!node->freed_by_destroy) {
+            free(node);
+        }
         return COCO_ERROR_CANCELLED;
     }
 
     /* 恢复后获取值 */
     if (ch->closed && !node->value) {
-        free(node);
+        if (!node->freed_by_destroy) {
+            free(node);
+        }
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
     *value = node->value;
-    free(node);
+    if (!node->freed_by_destroy) {
+        free(node);
+    }
 
     return COCO_OK;
 }
@@ -289,13 +300,15 @@ void coco_channel_destroy(coco_channel_t *ch) {
         free(ch->buffer);
     }
 
-    /* 清理等待队列 */
+    /* 清理等待队列，设置 freed_by_destroy 标志防止协程恢复后 double-free */
     while (ch->send_wait_head) {
         wait_node_t *node = dequeue_wait(&ch->send_wait_head, &ch->send_wait_tail);
+        node->freed_by_destroy = true;
         free(node);
     }
     while (ch->recv_wait_head) {
         wait_node_t *node = dequeue_wait(&ch->recv_wait_head, &ch->recv_wait_tail);
+        node->freed_by_destroy = true;
         free(node);
     }
 

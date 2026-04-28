@@ -5,6 +5,7 @@
 .global _coco_ctx_save
 .global _coco_ctx_load
 .global _coco_ctx_switch
+.global _coco_x86_64_trampoline
 
 _coco_ctx_save:
     mov [rdi + 0],  rsp
@@ -46,3 +47,21 @@ _coco_ctx_switch:
     mov r15, [rsi + 48]
 
     ret
+
+/**
+ * coco_x86_64_trampoline - 协程入口 trampoline
+ *
+ * 栈状态 (ret 后):
+ *   [rsp]     = arg    (p[1])
+ *   [rsp + 8] = entry  (p[2])
+ *
+ * 执行流程:
+ *   1. 从栈中获取 arg 和 entry
+ *   2. 清理栈帧
+ *   3. 跳转到 entry(arg)
+ */
+_coco_x86_64_trampoline:
+    mov rdi, [rsp]         ; arg -> 第一个参数寄存器
+    mov rax, [rsp + 8]     ; entry 函数地址
+    add rsp, 16            ; 清理栈帧
+    jmp rax                ; 跳转到 entry(rdi=arg)

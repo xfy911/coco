@@ -13,6 +13,7 @@
 typedef struct coco_ctx {
     void *sp;       /* offset 0: 栈指针 */
     void *fp;       /* offset 8: 基址指针 (ARM64: x29, x86-64: rbp) */
+#if defined(__aarch64__)
     void *lr;       /* offset 16: 链接寄存器 (ARM64: x30) */
     void *x19;      /* offset 24: callee-saved */
     void *x20;      /* offset 32 */
@@ -24,6 +25,13 @@ typedef struct coco_ctx {
     void *x26;      /* offset 80 */
     void *x27;      /* offset 88 */
     void *x28;      /* offset 96 */
+#elif defined(__x86_64__)
+    void *rbx;      /* offset 16: callee-saved */
+    void *r12;      /* offset 24 */
+    void *r13;      /* offset 32 */
+    void *r14;      /* offset 40 */
+    void *r15;      /* offset 48 */
+#endif
 } coco_ctx_t;
 
 /* 协程结构 */

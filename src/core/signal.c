@@ -21,8 +21,8 @@ static _Thread_local coco_sched_t *g_overflow_sched = NULL;
 /* 信号栈大小（需要足够大以运行 handler） */
 #define SIGNAL_STACK_SIZE (64 * 1024)
 
-/* 替代信号栈 */
-static stack_t g_sigaltstack;
+/* 替代信号栈（线程局部，支持多线程场景） */
+static _Thread_local stack_t g_sigaltstack;
 
 /**
  * find_coro_by_stack - 从 fault address 反查协程

@@ -5,6 +5,7 @@
 #include "../coco_internal.h"
 #include <stdint.h>
 
+#if defined(__aarch64__)
 /**
  * coco_ctx_init - 初始化协程上下文 (ARM64 版本)
  *
@@ -52,3 +53,42 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
     ctx->x27 = 0;
     ctx->x28 = 0;
 }
+
+#elif defined(__x86_64__)
+/**
+ * coco_ctx_init - 初始化协程上下文 (x86-64 版本)
+ *
+ * x86-64 System V ABI:
+ *   参数通过 rdi 传递（不在栈上）
+ *   需要 trampoline 将 entry 地址放入返回路径
+ *
+ * 栈帧布局 (从低地址向上):
+ *   p[0] = trampoline  (返回地址，ret 弹出后跳转)
+ *   p[1] = arg         (参数，trampoline 会放入 rdi)
+ *   p[2] = entry       (函数地址，trampoline 会跳转)
+ */
+void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void *arg) {
+    uintptr_t sp = (uintptr_t)stack_top;
+    sp -= 24;      /* 预留 3 个 64-bit 值 */
+    sp &= ~0xF;    /* 16 字节对齐 */
+
+    uint64_t *p = (uint64_t*)sp;
+
+    /* 声明 trampoline（在汇编中实现） */
+    extern void coco_x86_64_trampoline(void);
+
+    p[0] = (uint64_t)coco_x86_64_trampoline;  /* 返回地址 */
+    p[1] = (uint64_t)arg;                      /* 参数 */
+    p[2] = (uint64_t)entry;                    /* 函数地址 */
+
+    /* 设置上下文 */
+    ctx->sp = (void*)sp;
+    ctx->fp = 0;
+    ctx->rbx = 0;
+    ctx->r12 = 0;
+    ctx->r13 = 0;
+    ctx->r14 = 0;
+    ctx->r15 = 0;
+}
+
+#endif
