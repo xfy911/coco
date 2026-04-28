@@ -3,6 +3,7 @@
  */
 
 #include "../coco_internal.h"
+#include "stack_pool.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -79,6 +80,17 @@ coco_sched_t *coco_sched_create(void) {
         return NULL;
     }
 
+    /* 初始化栈池 */
+    sched->stack_pool = stack_pool_create();
+    if (!sched->stack_pool) {
+        coco_poll_cleanup(sched);
+        coco_timer_wheel_destroy(sched->timer_wheel);
+        coco_signal_cleanup();
+        free(sched->coro_table);
+        free(sched);
+        return NULL;
+    }
+
     return sched;
 }
 
@@ -104,10 +116,16 @@ void coco_sched_destroy(coco_sched_t *sched) {
         coco_coro_t *coro = sched->coro_table[i];
         if (coro) {
             if (coro->stack_base) {
-                coco_stack_free(coro->stack_top, coro->stack_size);
+                stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
             }
             free(coro);
         }
+    }
+
+    /* 销毁栈池 */
+    if (sched->stack_pool) {
+        stack_pool_destroy(sched->stack_pool);
+        sched->stack_pool = NULL;
     }
 
     free(sched->coro_table);
@@ -142,12 +160,23 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     sched->current = coro;
     coro->state = COCO_STATE_RUNNING;
 
+    /* 初始化遥测（首次切换） */
+    if (coro->stack_high_water_mark == 0) {
+        coro->stack_high_water_mark = (size_t)coro->stack_top;
+    }
+
     /* 设置溢出恢复点 */
     if (coco_set_overflow_checkpoint() == 0) {
         /* 正常执行 */
         coco_ctx_switch(&sched->main_ctx, &coro->ctx);
     } else {
         /* 从栈溢出恢复，coro 状态已由 handler 设置 */
+    }
+
+    /* 切换回调度器后，更新遥测 */
+    size_t current_sp = (size_t)coro->ctx.sp;
+    if (current_sp < coro->stack_high_water_mark) {
+        coro->stack_high_water_mark = current_sp;
     }
 }
 
@@ -251,8 +280,8 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
         return NULL;
     }
 
-    /* 分配栈 */
-    coro->stack_top = coco_stack_alloc(stack_size);
+    /* 从栈池分配栈 */
+    coro->stack_top = stack_pool_alloc(sched->stack_pool, stack_size);
     if (!coro->stack_top) {
         free(coro);
         return NULL;
@@ -269,6 +298,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     coro->entry = entry;
     coro->arg = arg;
     coro->wait_fd = -1;
+    coro->stack_high_water_mark = 0;  /* 遥测初始化 */
 
     /* 添加到协程池 */
     if (coro->id < sched->coro_capacity) {
@@ -361,4 +391,11 @@ void coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb) {
     if (coro) {
         coro->error_cb = cb;
     }
+}
+
+size_t coco_get_stack_usage(coco_coro_t *coro) {
+    if (!coro || coro->stack_high_water_mark == 0) {
+        return 0;
+    }
+    return (size_t)coro->stack_top - coro->stack_high_water_mark;
 }

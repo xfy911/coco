@@ -44,7 +44,10 @@ typedef struct coco_timer coco_timer_t;
 typedef void (*coco_error_cb)(coco_coro_t *coro, int error_code, const char *msg);
 
 /* === Default Configuration === */
-#define COCO_DEFAULT_STACK_SIZE   (64 * 1024)   /* 64KB */
+#define COCO_DEFAULT_STACK_SIZE   (64 * 1024)   /* 64KB - 默认值，待遥测验证 */
+#define COCO_STACK_SMALL          (16 * 1024)   /* 16KB - I/O 密集，需谨慎 */
+#define COCO_STACK_MEDIUM         (32 * 1024)   /* 32KB - 通用 */
+#define COCO_STACK_LARGE          (128 * 1024)  /* 128KB - 递归/大栈帧 */
 #define COCO_MAX_COROUTINES       10000
 
 /* === Scheduler API === */
@@ -140,6 +143,15 @@ uint64_t coco_get_id(coco_coro_t *coro);
  * @param cb 错误回调函数
  */
 void coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb);
+
+/**
+ * 获取协程栈使用量
+ * @param coro 协程指针
+ * @return 已使用字节数，失败返回 0
+ *
+ * 注意：只采样 yield/exit 点的栈使用，可能低估深度递归峰值
+ */
+size_t coco_get_stack_usage(coco_coro_t *coro);
 
 /* === Channel API === */
 

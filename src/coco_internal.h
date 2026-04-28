@@ -46,11 +46,16 @@ struct coco_coro {
     int wait_fd;           /* 等待的 fd（-1 表示无） */
     uint64_t wake_time;    /* 定时唤醒时间（ns） */
 
+    size_t stack_high_water_mark;  /* 栈使用峰值（最低栈指针地址） */
+
     coco_error_cb error_cb;
 };
 
 /* 时间轮结构（前置声明） */
 typedef struct coco_timer_wheel coco_timer_wheel_t;
+
+/* 栈池结构（前置声明） */
+typedef struct stack_pool stack_pool_t;
 
 /* 调度器结构 */
 struct coco_sched {
@@ -71,6 +76,9 @@ struct coco_sched {
     /* 事件循环 */
     int poll_fd;               /* epoll/kqueue 实例 */
     coco_timer_wheel_t *timer_wheel;  /* 时间轮 */
+
+    /* 栈池 */
+    stack_pool_t *stack_pool;  /* 栈池（单线程设计，无需同步） */
 };
 
 /* 上下文 API (汇编实现) */

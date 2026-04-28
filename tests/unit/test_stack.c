@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#define STACK_SIZE (64 * 1024)  /* 64KB */
+#define STACK_SIZE COCO_DEFAULT_STACK_SIZE
 
 void test_stack_alloc(void) {
     printf("test_stack_alloc: ");

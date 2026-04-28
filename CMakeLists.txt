@@ -32,6 +32,7 @@ set(CORE_SOURCES
     src/core/context.c
     src/core/stack.c
     src/core/signal.c
+    src/core/stack_pool.c
 )
 
 set(TIMER_SOURCES
@@ -119,6 +120,7 @@ if(COCO_BUILD_EXAMPLES)
         basic
         echo_server
         pipeline
+        memory_test
     )
 
     foreach(example_name ${EXAMPLES})

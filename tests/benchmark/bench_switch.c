@@ -9,7 +9,7 @@
 #include <time.h>
 
 #define SWITCH_COUNT 10000000  /* 10M 次切换 */
-#define STACK_SIZE (64 * 1024)  /* 64KB */
+#define STACK_SIZE COCO_DEFAULT_STACK_SIZE
 
 /* 全局变量 */
 static coco_ctx_t main_ctx;
