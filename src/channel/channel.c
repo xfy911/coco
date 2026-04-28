@@ -124,7 +124,7 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
         /* 直接传递给接收者 */
         recv_waiter->value = value;
         enqueue_ready(sched, recv_waiter->coro);
-        free(recv_waiter);
+        /* 不释放 recv_waiter：接收者恢复后会自己释放 */
         return COCO_OK;
     }
 
@@ -145,6 +145,9 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     enqueue_wait(&ch->send_wait_head, &ch->send_wait_tail, node);
     coro->state = COCO_STATE_WAITING;
     coco_yield();
+
+    /* 恢复后释放自己的等待节点 */
+    free(node);
 
     /* 恢复后检查 channel 是否关闭 */
     if (ch->closed) {
@@ -190,7 +193,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
             ch->tail = (ch->tail + 1) % ch->capacity;
             ch->count++;
             enqueue_ready(sched, send_waiter->coro);
-            free(send_waiter);
+            /* 不释放 send_waiter：发送者恢复后会自己释放 */
         }
 
         return COCO_OK;
@@ -201,7 +204,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
     if (send_waiter) {
         *value = send_waiter->value;
         enqueue_ready(sched, send_waiter->coro);
-        free(send_waiter);
+        /* 不释放 send_waiter：发送者恢复后会自己释放 */
         return COCO_OK;
     }
 

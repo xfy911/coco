@@ -5,6 +5,7 @@
 #include "../coco_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* 全局调度器指针（单线程模式） */
 coco_sched_t *g_current_sched = NULL;
@@ -206,9 +207,12 @@ int coco_sched_run(coco_sched_t *sched) {
                 continue;
             }
 
-            /* 等待 I/O 事件 */
+            /* 等待 I/O 事件 - 使用短暂 timeout 避免阻塞 channel-only 场景 */
             if (sched->poll_fd >= 0) {
-                coco_poll_wait(sched, 10);  /* 10ms timeout */
+                coco_poll_wait(sched, 1);  /* 1ms timeout，快速轮询 */
+            } else {
+                /* 无 I/O fd 注册时（如纯 channel 测试），短暂休眠后重试 */
+                usleep(1000);  /* 1ms */
             }
         }
     }
@@ -300,8 +304,10 @@ void coco_yield(void) {
         return;
     }
 
-    /* 重新入队 */
-    enqueue_ready(sched, coro);
+    /* 仅当协程正在运行时才重新入队（否则可能已被 channel 等机制设置为 WAITING） */
+    if (coro->state == COCO_STATE_RUNNING) {
+        enqueue_ready(sched, coro);
+    }
 
     /* 切换回调度器 */
     coco_ctx_switch(&coro->ctx, &sched->main_ctx);

@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 cmake-build-*/
+Testing/
 *.o
 *.a
 *.so
@@ -16,8 +17,8 @@ cmake-build-*/
 .DS_Store
 Thumbs.db
 
-# OMC state (optional, may keep for session)
-.omc/state/
+# OMC (oh-my-claudecode)
+.omc/
 
 # Debug
 *.dSYM/
