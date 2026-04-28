@@ -117,6 +117,7 @@ void coco_sched_destroy(coco_sched_t *sched) {
         if (coro) {
             if (coro->stack_base) {
                 stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+                coro->stack_base = NULL;
             }
             free(coro);
         }
@@ -236,12 +237,34 @@ int coco_sched_run(coco_sched_t *sched) {
                 continue;
             }
 
-            /* 等待 I/O 事件 - 使用短暂 timeout 避免阻塞 channel-only 场景 */
+            /* 动态计算 timeout 基于最近定时器到期时间 */
+            int timeout_ms = -1;  /* 默认无限等待 */
+            if (sched->timer_wheel) {
+                uint64_t next_expire = coco_timer_wheel_next_expire(sched->timer_wheel);
+                if (next_expire > 0) {
+                    uint64_t now = get_current_time_ms_internal();
+                    if (next_expire > now) {
+                        timeout_ms = (int)(next_expire - now);
+                        /* 限制最大等待时间为 1 秒，避免长时间阻塞 */
+                        if (timeout_ms > 1000) {
+                            timeout_ms = 1000;
+                        }
+                    } else {
+                        /* 定时器已到期，不等待 */
+                        timeout_ms = 0;
+                    }
+                }
+            }
+
+            /* 等待 I/O 事件 */
             if (sched->poll_fd >= 0) {
-                coco_poll_wait(sched, 1);  /* 1ms timeout，快速轮询 */
-            } else {
-                /* 无 I/O fd 注册时（如纯 channel 测试），短暂休眠后重试 */
+                coco_poll_wait(sched, timeout_ms);
+            } else if (timeout_ms < 0) {
+                /* 无 I/O fd 且无定时器，短暂休眠后重试（避免忙等） */
                 usleep(1000);  /* 1ms */
+            } else if (timeout_ms > 0) {
+                /* 有定时器但无 I/O，等待定时器到期 */
+                usleep((useconds_t)(timeout_ms * 1000));
             }
         }
     }
@@ -362,7 +385,14 @@ void coco_destroy(coco_coro_t *coro) {
     }
 
     if (coro->stack_base) {
-        coco_stack_free(coro->stack_top, coro->stack_size);
+        coco_sched_t *sched = g_current_sched;
+        if (sched && sched->stack_pool) {
+            stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+        } else {
+            /* Fallback: 无调度器时直接释放内存 */
+            coco_stack_free(coro->stack_top, coro->stack_size);
+        }
+        coro->stack_base = NULL;
     }
     free(coro);
 }

@@ -99,6 +99,7 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw);
 coco_timer_t *coco_timer_add(coco_timer_wheel_t *tw, uint64_t delay_ms, coco_coro_t *coro);
 void coco_timer_tick(coco_timer_wheel_t *tw, coco_sched_t *sched);
 uint64_t coco_timer_wheel_next_expire(coco_timer_wheel_t *tw);
+uint64_t get_current_time_ms_internal(void);
 
 /* 内部调度辅助函数 */
 void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro);

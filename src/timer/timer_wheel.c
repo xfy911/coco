@@ -44,11 +44,16 @@ struct coco_timer {
 /* 全局时间轮 */
 static coco_timer_wheel_t *g_timer_wheel = NULL;
 
-/* 获取当前时间（毫秒） */
-static uint64_t get_current_time_ms(void) {
+/* 获取当前时间（毫秒）- 内部 API */
+uint64_t get_current_time_ms_internal(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL;
+}
+
+/* 内部使用的静态版本 */
+static uint64_t get_current_time_ms(void) {
+    return get_current_time_ms_internal();
 }
 
 /* 初始化时间轮 */
@@ -79,7 +84,33 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw) {
             timer = next;
         }
     }
-    /* 类似清理其他层... */
+
+    for (int i = 0; i < W2_SIZE; i++) {
+        coco_timer_t *timer = tw->w2[i];
+        while (timer) {
+            coco_timer_t *next = timer->next;
+            free(timer);
+            timer = next;
+        }
+    }
+
+    for (int i = 0; i < W3_SIZE; i++) {
+        coco_timer_t *timer = tw->w3[i];
+        while (timer) {
+            coco_timer_t *next = timer->next;
+            free(timer);
+            timer = next;
+        }
+    }
+
+    for (int i = 0; i < W4_SIZE; i++) {
+        coco_timer_t *timer = tw->w4[i];
+        while (timer) {
+            coco_timer_t *next = timer->next;
+            free(timer);
+            timer = next;
+        }
+    }
 
     free(tw);
     g_timer_wheel = NULL;
@@ -287,19 +318,67 @@ void coco_timer_tick(coco_timer_wheel_t *tw, coco_sched_t *sched) {
     }
 }
 
-/* 获取下一个定时器到期时间 */
+/* 获取下一个定时器到期时间（检查所有四层） */
 uint64_t coco_timer_wheel_next_expire(coco_timer_wheel_t *tw) {
     if (!tw) {
         return 0;
     }
 
-    /* 简化实现：返回最小延迟 */
+    uint64_t min_expire = 0;
+
+    /* 检查 W1 层 (粒度 1ms, 范围 0-255ms) */
     for (int i = 0; i < W1_SIZE; i++) {
         if (tw->w1[i]) {
-            uint64_t delay = (i - tw->w1_tick % W1_SIZE) % W1_SIZE;
-            return tw->current_time_ms + delay;
+            int slots_ahead = (i - (int)(tw->w1_tick % W1_SIZE) + W1_SIZE) % W1_SIZE;
+            uint64_t expire = tw->current_time_ms + slots_ahead;
+            if (min_expire == 0 || expire < min_expire) {
+                min_expire = expire;
+            }
+            break;  /* W1 是最近的，找到第一个即可 */
         }
     }
 
-    return 0;
+    /* 检查 W2 层 (粒度 256ms, 范围 0-16383ms) */
+    if (min_expire == 0) {
+        for (int i = 0; i < W2_SIZE; i++) {
+            if (tw->w2[i]) {
+                int slots_ahead = (i - (int)(tw->w2_tick % W2_SIZE) + W2_SIZE) % W2_SIZE;
+                uint64_t expire = tw->current_time_ms + slots_ahead * W1_SIZE;
+                if (min_expire == 0 || expire < min_expire) {
+                    min_expire = expire;
+                }
+                break;
+            }
+        }
+    }
+
+    /* 检查 W3 层 (粒度 16384ms, 范围 0-1048575ms) */
+    if (min_expire == 0) {
+        for (int i = 0; i < W3_SIZE; i++) {
+            if (tw->w3[i]) {
+                int slots_ahead = (i - (int)(tw->w3_tick % W3_SIZE) + W3_SIZE) % W3_SIZE;
+                uint64_t expire = tw->current_time_ms + slots_ahead * W1_SIZE * W2_SIZE;
+                if (min_expire == 0 || expire < min_expire) {
+                    min_expire = expire;
+                }
+                break;
+            }
+        }
+    }
+
+    /* 检查 W4 层 (粒度 1048576ms, 范围 0-67108863ms) */
+    if (min_expire == 0) {
+        for (int i = 0; i < W4_SIZE; i++) {
+            if (tw->w4[i]) {
+                int slots_ahead = (i - (int)(tw->w4_tick % W4_SIZE) + W4_SIZE) % W4_SIZE;
+                uint64_t expire = tw->current_time_ms + slots_ahead * W1_SIZE * W2_SIZE * W3_SIZE;
+                if (min_expire == 0 || expire < min_expire) {
+                    min_expire = expire;
+                }
+                break;
+            }
+        }
+    }
+
+    return min_expire;
 }
