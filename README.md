@@ -26,19 +26,218 @@ Coco uses a **single-threaded cooperative model**. All coroutines run within one
 | macOS | ARM64 (Apple Silicon) | kqueue | Supported |
 | Windows | x86-64 | WSAPoll | Stub |
 
-## Build
+## Quick Start
+
+### Build
 
 ```bash
 cmake -B build
 cmake --build build
 ```
 
-### Build Options
+This produces static library `build/libcoco.a`.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `COCO_BUILD_TESTS` | ON | Build unit tests and benchmarks |
-| `COCO_BUILD_EXAMPLES` | ON | Build example programs |
+### Integrate Into Your Project
+
+**Option 1: Link Static Library**
+
+```bash
+# Copy headers and library
+cp include/coco.h your_project/include/
+cp build/libcoco.a your_project/lib/
+
+# Compile
+gcc -Iyour_project/include your_code.c -Lyour_project/lib -lcoco -o your_program
+```
+
+**Option 2: CMake Subdirectory**
+
+```cmake
+add_subdirectory(coco)
+target_link_libraries(your_target PRIVATE coco)
+```
+
+**Option 3: Direct Source Inclusion**
+
+```bash
+cp -r include/coco.h your_project/include/
+cp -r src your_project/coco_src/
+```
+
+## Usage Examples
+
+### Basic Coroutine
+
+```c
+#include "coco.h"
+#include <stdio.h>
+
+void my_coroutine(void *arg) {
+    int *data = (int*)arg;
+    printf("Coroutine received: %d\n", *data);
+
+    coco_yield();  // Yield execution
+
+    printf("Coroutine resumed\n");
+}
+
+int main(void) {
+    // 1. Create scheduler
+    coco_sched_t *sched = coco_sched_create();
+
+    // 2. Create coroutine
+    int value = 42;
+    coco_create(sched, my_coroutine, &value, 0);
+
+    // 3. Run scheduler
+    coco_sched_run(sched);
+
+    // 4. Cleanup
+    coco_sched_destroy(sched);
+    return 0;
+}
+```
+
+### Channel Communication (Go-style)
+
+```c
+#include "coco.h"
+#include <stdio.h>
+
+void producer(void *arg) {
+    coco_channel_t *ch = (coco_channel_t*)arg;
+    for (int i = 0; i < 10; i++) {
+        coco_channel_send(ch, (void*)(intptr_t)i);
+        printf("Sent: %d\n", i);
+    }
+    coco_channel_close(ch);
+}
+
+void consumer(void *arg) {
+    coco_channel_t *ch = (coco_channel_t*)arg;
+    void *val;
+    while (coco_channel_recv(ch, &val) == COCO_OK) {
+        printf("Received: %ld\n", (long)val);
+    }
+}
+
+int main(void) {
+    coco_sched_t *sched = coco_sched_create();
+    coco_channel_t *ch = coco_channel_create(5);  // Buffer size 5
+
+    coco_create(sched, producer, ch, 0);
+    coco_create(sched, consumer, ch, 0);
+
+    coco_sched_run(sched);
+    coco_channel_destroy(ch);
+    coco_sched_destroy(sched);
+    return 0;
+}
+```
+
+### Async I/O
+
+```c
+#include "coco.h"
+#include <stdio.h>
+#include <unistd.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+void handle_client(void *arg) {
+    int fd = (int)(intptr_t)arg;
+    char buf[1024];
+
+    ssize_t n = coco_read(fd, buf, sizeof(buf));  // Non-blocking wait
+    if (n > 0) {
+        coco_write(fd, buf, n);  // Echo back
+    }
+    close(fd);
+}
+
+void echo_server(void *arg) {
+    int port = *(int*)arg;
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+        .sin_addr.s_addr = INADDR_ANY
+    };
+
+    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(server_fd, 128);
+
+    printf("Listening on port %d\n", port);
+
+    while (1) {
+        struct sockaddr_in client_addr;
+        size_t addrlen = sizeof(client_addr);
+        int client_fd = coco_accept(server_fd, &client_addr, &addrlen);
+        if (client_fd >= 0) {
+            coco_create(coco_self()->sched, handle_client,
+                       (void*)(intptr_t)client_fd, 0);
+        }
+    }
+}
+```
+
+### Timer
+
+```c
+#include "coco.h"
+#include <stdio.h>
+
+void timer_callback(void *arg) {
+    printf("Timer fired: %s\n", (char*)arg);
+}
+
+int main(void) {
+    coco_sched_t *sched = coco_sched_create();
+
+    // Create timer that fires after 1000ms
+    coco_timer_t *timer = coco_timer(1000, timer_callback, "Hello!");
+
+    // Timer can be cancelled: coco_timer_cancel(timer);
+
+    coco_sched_run(sched);
+    coco_sched_destroy(sched);
+    return 0;
+}
+```
+
+### Coroutine Join (Wait for Result)
+
+```c
+#include "coco.h"
+#include <stdio.h>
+
+void worker(void *arg) {
+    int input = *(int*)arg;
+    int *result = malloc(sizeof(int));
+    *result = input * 2;
+    coco_exit(coco_self(), result);
+}
+
+void main_coro(void *arg) {
+    int value = 21;
+    coco_coro_t *worker_coro = coco_create(coco_self()->sched,
+                                           worker, &value, 0);
+
+    void *result = coco_join(worker_coro);  // Wait for completion
+    printf("Result: %d\n", *(int*)result);
+    free(result);
+    coco_destroy(worker_coro);
+}
+
+int main(void) {
+    coco_sched_t *sched = coco_sched_create();
+    coco_create(sched, main_coro, NULL, 0);
+    coco_sched_run(sched);
+    coco_sched_destroy(sched);
+    return 0;
+}
+```
 
 ## Run Tests
 
@@ -212,36 +411,12 @@ void coco_timer_cancel(coco_timer_t *timer);
 ```
 Cancel a pending timer.
 
-## Examples
+## More Examples
 
-### Basic Coroutine
+See the `examples/` directory:
 
-```c
-#include "coco.h"
-#include <stdio.h>
-
-void coro_func(void *arg) {
-    printf("Coroutine started\n");
-    coco_yield();
-    printf("Coroutine resumed\n");
-}
-
-int main(void) {
-    coco_sched_t *sched = coco_sched_create();
-    coco_create(sched, coro_func, NULL, 0);
-    coco_sched_run(sched);
-    coco_sched_destroy(sched);
-    return 0;
-}
-```
-
-### Pipeline Pattern
-
-See `examples/pipeline.c` for a producer-processor-consumer pattern using channels.
-
-### Echo Server
-
-See `examples/echo_server.c` for a high-concurrency TCP echo server.
+- `examples/pipeline.c` - Producer-processor-consumer pattern using channels
+- `examples/echo_server.c` - High-concurrency TCP echo server
 
 ## Architecture
 
