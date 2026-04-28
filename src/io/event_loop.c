@@ -4,9 +4,9 @@
 
 #include "../coco_internal.h"
 
-/* 外部全局变量 */
-extern coco_sched_t *g_current_sched;
-extern coco_coro_t *g_current_coro;
+/* 外部全局变量（TLS） */
+extern _Thread_local coco_sched_t *g_current_sched;
+extern _Thread_local coco_coro_t *g_current_coro;
 
 int coco_sleep(uint64_t ms) {
     coco_sched_t *sched = g_current_sched;

@@ -11,13 +11,9 @@
 #include <errno.h>
 #include <string.h>
 
-/* fd 到协程的映射表 */
-#define FD_TABLE_SIZE 1024
-static coco_coro_t *g_fd_table[FD_TABLE_SIZE];
-
-/* 外部全局变量（在 coro.c 中定义） */
-extern coco_sched_t *g_current_sched;
-extern coco_coro_t *g_current_coro;
+/* 外部全局变量（TLS） */
+extern _Thread_local coco_sched_t *g_current_sched;
+extern _Thread_local coco_coro_t *g_current_coro;
 
 /**
  * coco_poll_init - 初始化 epoll 实例
@@ -36,8 +32,13 @@ int coco_poll_init(coco_sched_t *sched) {
         return COCO_ERROR;
     }
 
-    /* 初始化 fd 映射表 */
-    memset(g_fd_table, 0, sizeof(g_fd_table));
+    /* 创建 FD 表 */
+    sched->fd_table = fd_table_create(1024);
+    if (!sched->fd_table) {
+        close(sched->poll_fd);
+        sched->poll_fd = -1;
+        return COCO_ERROR;
+    }
 
     return COCO_OK;
 }
@@ -46,9 +47,15 @@ int coco_poll_init(coco_sched_t *sched) {
  * coco_poll_cleanup - 清理 epoll 实例
  */
 void coco_poll_cleanup(coco_sched_t *sched) {
-    if (sched && sched->poll_fd >= 0) {
-        close(sched->poll_fd);
-        sched->poll_fd = -1;
+    if (sched) {
+        if (sched->poll_fd >= 0) {
+            close(sched->poll_fd);
+            sched->poll_fd = -1;
+        }
+        if (sched->fd_table) {
+            fd_table_destroy(sched->fd_table);
+            sched->fd_table = NULL;
+        }
     }
 }
 
@@ -62,7 +69,7 @@ void coco_poll_cleanup(coco_sched_t *sched) {
  * @return 0 成功，负数错误码
  */
 int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short events) {
-    if (!sched || sched->poll_fd < 0 || fd < 0 || fd >= FD_TABLE_SIZE) {
+    if (!sched || sched->poll_fd < 0 || fd < 0) {
         return COCO_ERROR;
     }
 
@@ -84,7 +91,9 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
     }
 
     /* 映射 fd 到协程 */
-    g_fd_table[fd] = coro;
+    if (fd_table_set(sched->fd_table, fd, coro) < 0) {
+        return COCO_ERROR;
+    }
     coro->wait_fd = fd;
     coro->state = COCO_STATE_WAITING;
 
@@ -98,12 +107,12 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
  * @param fd 文件描述符
  */
 void coco_poll_unregister(coco_sched_t *sched, int fd) {
-    if (!sched || sched->poll_fd < 0 || fd < 0 || fd >= FD_TABLE_SIZE) {
+    if (!sched || sched->poll_fd < 0 || fd < 0) {
         return;
     }
 
     epoll_ctl(sched->poll_fd, EPOLL_CTL_DEL, fd, NULL);
-    g_fd_table[fd] = NULL;
+    fd_table_clear(sched->fd_table, fd);
 }
 
 /**
@@ -124,12 +133,12 @@ int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
     /* 处理就绪事件 */
     for (int i = 0; i < n; i++) {
         int fd = events[i].data.fd;
-        coco_coro_t *coro = g_fd_table[fd];
+        coco_coro_t *coro = fd_table_get(sched->fd_table, fd);
 
         if (coro && coro->state == COCO_STATE_WAITING) {
             /* 唤醒协程 */
             enqueue_ready(sched, coro);
-            g_fd_table[fd] = NULL;
+            fd_table_clear(sched->fd_table, fd);
             coro->wait_fd = -1;
         }
     }
@@ -154,6 +163,11 @@ int coco_read(int fd, void *buf, size_t count) {
     }
 
     while (1) {
+        /* 检查取消状态 */
+        if (coro->cancelled) {
+            return COCO_ERROR_CANCELLED;
+        }
+
         ssize_t n = read(fd, buf, count);
 
         if (n >= 0) {
@@ -190,6 +204,11 @@ int coco_write(int fd, const void *buf, size_t count) {
     size_t written = 0;
 
     while (written < count) {
+        /* 检查取消状态 */
+        if (coro->cancelled) {
+            return COCO_ERROR_CANCELLED;
+        }
+
         ssize_t n = write(fd, buf + written, count - written);
 
         if (n >= 0) {
@@ -229,6 +248,11 @@ int coco_accept(int fd, void *addr, size_t *addrlen) {
     }
 
     while (1) {
+        /* 检查取消状态 */
+        if (coro->cancelled) {
+            return COCO_ERROR_CANCELLED;
+        }
+
         int client_fd = accept(fd, (struct sockaddr*)addr, (socklen_t*)addrlen);
 
         if (client_fd >= 0) {
@@ -262,6 +286,11 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
         return COCO_ERROR;
     }
 
+    /* 检查取消状态 */
+    if (coro->cancelled) {
+        return COCO_ERROR_CANCELLED;
+    }
+
     /* 尝试连接 */
     int ret = connect(fd, (const struct sockaddr*)addr, (socklen_t)addrlen);
 
@@ -274,6 +303,11 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
         coco_poll_register(sched, fd, coro, EPOLLOUT);
         coco_yield();
         coco_poll_unregister(sched, fd);
+
+        /* 检查取消状态 */
+        if (coro->cancelled) {
+            return COCO_ERROR_CANCELLED;
+        }
 
         /* 检查连接结果 */
         int error = 0;

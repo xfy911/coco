@@ -38,11 +38,15 @@ struct coco_timer {
     coco_coro_t *coro;          /* 关联协程 */
     void (*callback)(void*);    /* 回调函数 */
     void *arg;                  /* 回调参数 */
-    coco_timer_t *next;         /* 链表节点 */
+    coco_timer_t *next;         /* 链表下一节点 */
+    coco_timer_t *prev;         /* 链表上一节点 (O(1) 取消) */
+    int level;                  /* 所在层级 (1-4) */
+    int slot;                   /* 所在槽位 */
+    bool cancelled;             /* 已取消标志 */
 };
 
-/* 全局时间轮 */
-static coco_timer_wheel_t *g_timer_wheel = NULL;
+/* 线程局部时间轮 */
+static _Thread_local coco_timer_wheel_t *g_timer_wheel = NULL;
 
 /* 获取当前时间（毫秒）- 内部 API */
 uint64_t get_current_time_ms_internal(void) {
@@ -116,36 +120,40 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw) {
     g_timer_wheel = NULL;
 }
 
-/* 添加定时器到指定层级 */
+/* 添加定时器到指定层级 (双向链表) */
 static void add_timer_to_wheel(coco_timer_wheel_t *tw, coco_timer_t *timer, int level, int slot) {
     timer->next = NULL;
+    timer->prev = NULL;
+    timer->level = level;
+    timer->slot = slot;
+    timer->cancelled = false;
 
     switch (level) {
         case 1:
             if (tw->w1[slot]) {
-                coco_timer_t *head = tw->w1[slot];
-                timer->next = head;
+                tw->w1[slot]->prev = timer;
+                timer->next = tw->w1[slot];
             }
             tw->w1[slot] = timer;
             break;
         case 2:
             if (tw->w2[slot]) {
-                coco_timer_t *head = tw->w2[slot];
-                timer->next = head;
+                tw->w2[slot]->prev = timer;
+                timer->next = tw->w2[slot];
             }
             tw->w2[slot] = timer;
             break;
         case 3:
             if (tw->w3[slot]) {
-                coco_timer_t *head = tw->w3[slot];
-                timer->next = head;
+                tw->w3[slot]->prev = timer;
+                timer->next = tw->w3[slot];
             }
             tw->w3[slot] = timer;
             break;
         case 4:
             if (tw->w4[slot]) {
-                coco_timer_t *head = tw->w4[slot];
-                timer->next = head;
+                tw->w4[slot]->prev = timer;
+                timer->next = tw->w4[slot];
             }
             tw->w4[slot] = timer;
             break;
@@ -210,15 +218,68 @@ coco_timer_t *coco_timer_add(coco_timer_wheel_t *tw, uint64_t delay_ms, coco_cor
     return timer;
 }
 
-/* 取消定时器 */
-void coco_timer_cancel(coco_timer_t *timer) {
+/* 创建定时器（显式调度器版本） */
+coco_timer_t *coco_timer_ex(coco_sched_t *sched, uint64_t delay_ms, void (*callback)(void*), void *arg) {
+    if (!sched || !sched->timer_wheel) {
+        return NULL;
+    }
+
+    coco_timer_t *timer = calloc(1, sizeof(coco_timer_t));
     if (!timer) {
+        return NULL;
+    }
+
+    timer->expire_time_ms = sched->timer_wheel->current_time_ms + delay_ms;
+    timer->callback = callback;
+    timer->arg = arg;
+
+    place_timer(sched->timer_wheel, timer);
+
+    return timer;
+}
+
+/* 取消定时器 (O(1) 操作) */
+void coco_timer_cancel(coco_timer_t *timer) {
+    if (!timer || timer->cancelled) {
         return;
     }
 
-    /* 简单标记为已取消（实际应从链表中移除） */
-    timer->callback = NULL;
+    timer->cancelled = true;
+
+    /* 从双向链表中移除 */
+    if (timer->prev) {
+        timer->prev->next = timer->next;
+    } else {
+        /* timer 是链表头，需要更新时间轮槽位 */
+        coco_timer_wheel_t *tw = g_timer_wheel;
+        if (tw) {
+            switch (timer->level) {
+                case 1:
+                    tw->w1[timer->slot] = timer->next;
+                    break;
+                case 2:
+                    tw->w2[timer->slot] = timer->next;
+                    break;
+                case 3:
+                    tw->w3[timer->slot] = timer->next;
+                    break;
+                case 4:
+                    tw->w4[timer->slot] = timer->next;
+                    break;
+            }
+        }
+    }
+
+    if (timer->next) {
+        timer->next->prev = timer->prev;
+    }
+
+    timer->next = NULL;
+    timer->prev = NULL;
     timer->coro = NULL;
+    timer->callback = NULL;
+
+    free(timer);
 }
 
 /* 从层级 cascading 定时器到下一层 */
@@ -250,9 +311,15 @@ static void cascade_timers(coco_timer_wheel_t *tw, int level) {
     while (timer_list) {
         coco_timer_t *timer = timer_list;
         timer_list = timer->next;
-        timer->next = NULL;
 
-        if (timer->coro || timer->callback) {
+        /* 清除链表指针 */
+        timer->next = NULL;
+        timer->prev = NULL;
+
+        /* 已取消的定时器直接释放 */
+        if (timer->cancelled) {
+            free(timer);
+        } else if (timer->coro || timer->callback) {
             place_timer(tw, timer);
         } else {
             free(timer);
@@ -260,31 +327,39 @@ static void cascade_timers(coco_timer_wheel_t *tw, int level) {
     }
 }
 
-/* 处理过期定时器 */
-static void process_expired_timers(coco_timer_wheel_t *tw, coco_sched_t *sched) {
-    int slot = tw->w1_tick % W1_SIZE;
-    coco_timer_t *timer_list = tw->w1[slot];
-    tw->w1[slot] = NULL;
 
-    while (timer_list) {
-        coco_timer_t *timer = timer_list;
-        timer_list = timer->next;
+/* 批量处理 W1 层过期槽位 */
+static void process_w1_range(coco_timer_wheel_t *tw, coco_sched_t *sched,
+                              uint32_t start_tick, uint32_t end_tick) {
+    for (uint32_t tick = start_tick; tick < end_tick; tick++) {
+        int slot = tick % W1_SIZE;
+        coco_timer_t *timer_list = tw->w1[slot];
+        tw->w1[slot] = NULL;
 
-        if (timer->coro) {
-            /* 唤醒协程 */
-            enqueue_ready(sched, timer->coro);
-            timer->coro->state = COCO_STATE_READY;
-            timer->coro->wake_time = 0;
-        } else if (timer->callback) {
-            /* 执行回调 */
-            timer->callback(timer->arg);
+        while (timer_list) {
+            coco_timer_t *timer = timer_list;
+            timer_list = timer->next;
+
+            /* 跳过已取消的定时器 */
+            if (timer->cancelled) {
+                free(timer);
+                continue;
+            }
+
+            if (timer->coro) {
+                enqueue_ready(sched, timer->coro);
+                timer->coro->state = COCO_STATE_READY;
+                timer->coro->wake_time = 0;
+            } else if (timer->callback) {
+                timer->callback(timer->arg);
+            }
+
+            free(timer);
         }
-
-        free(timer);
     }
 }
 
-/* 时间轮 tick */
+/* 时间轮 tick - 批量处理优化 */
 void coco_timer_tick(coco_timer_wheel_t *tw, coco_sched_t *sched) {
     if (!tw) {
         return;
@@ -293,28 +368,43 @@ void coco_timer_tick(coco_timer_wheel_t *tw, coco_sched_t *sched) {
     uint64_t now_ms = get_current_time_ms();
     uint64_t elapsed = now_ms - tw->current_time_ms;
 
-    for (uint64_t i = 0; i < elapsed; i++) {
-        tw->current_time_ms++;
-        tw->w1_tick++;
+    if (elapsed == 0) {
+        return;
+    }
 
-        /* 检查是否需要 cascading */
-        if (tw->w1_tick % W1_SIZE == 0) {
+    uint32_t old_w1_tick = tw->w1_tick;
+    uint32_t new_w1_tick = old_w1_tick + elapsed;
+
+    /* 更新 tick 计数器 */
+    tw->current_time_ms = now_ms;
+    tw->w1_tick = new_w1_tick;
+
+    /* 计算 cascading 需求 */
+    bool need_w2_cascade = (old_w1_tick / W1_SIZE) != (new_w1_tick / W1_SIZE);
+
+    /* 处理 W1 层所有过期槽位 */
+    process_w1_range(tw, sched, old_w1_tick, new_w1_tick);
+
+    /* 执行 cascading */
+    if (need_w2_cascade) {
+        uint32_t w2_cascades = (new_w1_tick / W1_SIZE) - (old_w1_tick / W1_SIZE);
+        for (uint32_t i = 0; i < w2_cascades; i++) {
             tw->w2_tick++;
             cascade_timers(tw, 2);
 
-            if (tw->w2_tick % W2_SIZE == 0) {
+            if ((tw->w2_tick % W2_SIZE) == 0) {
                 tw->w3_tick++;
                 cascade_timers(tw, 3);
 
-                if (tw->w3_tick % W3_SIZE == 0) {
+                if ((tw->w3_tick % W3_SIZE) == 0) {
                     tw->w4_tick++;
                     cascade_timers(tw, 4);
                 }
             }
         }
 
-        /* 处理过期定时器 */
-        process_expired_timers(tw, sched);
+        /* 处理从上层 cascading 下来可能在当前 tick 范围内的定时器 */
+        process_w1_range(tw, sched, old_w1_tick, new_w1_tick);
     }
 }
 

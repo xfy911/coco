@@ -6,6 +6,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2")
 
+# 覆盖率选项
+option(COCO_ENABLE_COVERAGE "Enable code coverage" OFF)
+if(COCO_ENABLE_COVERAGE)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage -fprofile-arcs -ftest-coverage")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+endif()
+
 # 平台检测
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(PLATFORM "linux")
@@ -33,6 +40,7 @@ set(CORE_SOURCES
     src/core/stack.c
     src/core/signal.c
     src/core/stack_pool.c
+    src/core/cancel.c
 )
 
 set(TIMER_SOURCES
@@ -45,6 +53,7 @@ set(CHANNEL_SOURCES
 
 set(IO_SOURCES
     src/io/event_loop.c
+    src/io/fd_table.c
 )
 
 # 平台特定源文件
@@ -92,6 +101,8 @@ if(COCO_BUILD_TESTS)
         test_io
         test_stack
         test_stack_overflow
+        test_cancel
+        test_fd_table
     )
 
     foreach(test_name ${UNIT_TESTS})
@@ -127,4 +138,38 @@ if(COCO_BUILD_EXAMPLES)
         add_executable(${example_name} examples/${example_name}.c)
         target_link_libraries(${example_name} coco)
     endforeach()
+endif()
+
+# 覆盖率目标
+if(COCO_BUILD_TESTS AND COCO_ENABLE_COVERAGE)
+    find_program(LCOV_PATH lcov)
+    find_program(GENHTML_PATH genhtml)
+
+    if(LCOV_PATH AND GENHTML_PATH)
+        add_custom_target(coverage
+            # 清理旧的覆盖率数据
+            COMMAND ${CMAKE_COMMAND} -E remove -f coverage.base coverage.test coverage.total coverage.cleaned.info
+            # 初始化基准数据
+            COMMAND ${LCOV_PATH} --capture --initial --directory . --output-file coverage.base
+            # 运行测试
+            COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+            # 捕获测试覆盖率数据
+            COMMAND ${LCOV_PATH} --capture --directory . --output-file coverage.test
+            # 合并基准和测试数据
+            COMMAND ${LCOV_PATH} --add-tracefile coverage.base --add-tracefile coverage.test --output-file coverage.total
+            # 过滤系统头文件和测试文件
+            COMMAND ${LCOV_PATH} --remove coverage.total '/usr/*' '/opt/homebrew/*' '*/tests/*' '*/examples/*' --output-file coverage.cleaned.info --ignore-errors unused
+            # 生成 HTML 报告
+            COMMAND ${GENHTML_PATH} coverage.cleaned.info --output-directory coverage_report
+            # 输出摘要
+            COMMAND ${LCOV_PATH} --summary coverage.cleaned.info
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            COMMENT "Generating code coverage report..."
+        )
+        add_custom_command(TARGET coverage POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in: ${CMAKE_BINARY_DIR}/coverage_report/"
+        )
+    else()
+        message(WARNING "lcov or genhtml not found. Coverage target will not be available.")
+    endif()
 endif()

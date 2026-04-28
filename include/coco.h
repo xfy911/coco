@@ -1,8 +1,18 @@
 /**
  * coco - A production-grade C coroutine library
  *
- * Supports: Linux/macOS/Windows (x86-64/ARM64)
+ * Supports: Linux/macOS (Windows: planned)
  * Features: Stackful coroutine, cooperative scheduling, channel, async I/O
+ *
+ * @file coco.h
+ * @brief Main header file for the coco coroutine library
+ *
+ * Coco is a production-grade stackful coroutine library for C, featuring:
+ * - Cooperative scheduling with multi-level priority support
+ * - O(1) timer cancellation via hierarchical timing wheel
+ * - Stack pool for memory reuse and reduced allocation overhead
+ * - Channel-based inter-coroutine communication
+ * - Non-blocking I/O with epoll/kqueue integration
  */
 
 #ifndef COCO_H
@@ -17,240 +27,435 @@ extern "C" {
 #endif
 
 /* === Error Codes === */
-#define COCO_OK                 0
-#define COCO_ERROR             -1
-#define COCO_ERROR_NOMEM       -2
-#define COCO_ERROR_STACK_OVERFLOW -3
-#define COCO_ERROR_CHANNEL_CLOSED -4
-#define COCO_ERROR_INVALID     -5
+/** @defgroup ErrorCodes Error Codes
+ *  @brief Error codes returned by coco functions
+ *  @{
+ */
+#define COCO_OK                 0    /**< Success */
+#define COCO_ERROR             -1    /**< Generic error */
+#define COCO_ERROR_NOMEM       -2    /**< Memory allocation failed */
+#define COCO_ERROR_STACK_OVERFLOW -3 /**< Stack overflow detected */
+#define COCO_ERROR_CHANNEL_CLOSED -4 /**< Channel is closed */
+#define COCO_ERROR_INVALID     -5    /**< Invalid argument */
+#define COCO_ERROR_CANCELLED   -6    /**< Operation was cancelled */
+/** @} */
 
 /* === Coroutine States === */
+/** @defgroup CoroutineStates Coroutine States
+ *  @brief Possible states of a coroutine
+ *  @{
+ */
 typedef enum coco_state {
-    COCO_STATE_CREATED,     /* 协程已创建，尚未运行 */
-    COCO_STATE_RUNNING,     /* 协程正在运行 */
-    COCO_STATE_WAITING,     /* 协程等待 I/O 或 channel */
-    COCO_STATE_READY,       /* 协程就绪，等待调度 */
-    COCO_STATE_DEAD,        /* 协程已结束 */
-    COCO_STATE_OVERFLOW,    /* 协程栈溢出（不可恢复） */
+    COCO_STATE_CREATED,     /**< Coroutine created but not yet running */
+    COCO_STATE_RUNNING,     /**< Coroutine is currently executing */
+    COCO_STATE_WAITING,     /**< Coroutine is waiting for I/O or channel */
+    COCO_STATE_READY,       /**< Coroutine is ready to be scheduled */
+    COCO_STATE_DEAD,        /**< Coroutine has finished execution */
+    COCO_STATE_OVERFLOW,    /**< Coroutine stack overflowed (unrecoverable) */
 } coco_state_t;
+/** @} */
+
+/* === Coroutine Priorities === */
+/** @defgroup CoroutinePriorities Coroutine Priorities
+ *  @brief Priority levels for coroutine scheduling
+ *
+ *  Higher priority coroutines are scheduled before lower priority ones.
+ *  Within the same priority level, scheduling is FIFO.
+ *  @{
+ */
+typedef enum coco_priority {
+    COCO_PRIORITY_HIGH   = 0,  /**< High priority: real-time tasks, critical paths */
+    COCO_PRIORITY_NORMAL = 1,  /**< Normal priority: default value */
+    COCO_PRIORITY_LOW    = 2,  /**< Low priority: background tasks */
+    COCO_PRIORITY_IDLE   = 3,  /**< Idle priority: runs only when no other tasks */
+    COCO_PRIORITY_COUNT  = 4,  /**< Number of priority levels */
+} coco_priority_t;
+/** @} */
 
 /* === Forward Declarations === */
-typedef struct coco_coro coco_coro_t;
-typedef struct coco_sched coco_sched_t;
-typedef struct coco_channel coco_channel_t;
-typedef struct coco_timer coco_timer_t;
+/** @defgroup Types Type Definitions
+ *  @brief Forward declarations for coco types
+ *  @{
+ */
+typedef struct coco_coro coco_coro_t;       /**< Coroutine handle */
+typedef struct coco_sched coco_sched_t;     /**< Scheduler handle */
+typedef struct coco_channel coco_channel_t; /**< Channel handle */
+typedef struct coco_timer coco_timer_t;     /**< Timer handle */
+/** @} */
 
 /* === Error Callback === */
+/**
+ * @brief Error callback function type
+ * @param coro The coroutine that encountered the error
+ * @param error_code The error code (see @ref ErrorCodes)
+ * @param msg Human-readable error message
+ */
 typedef void (*coco_error_cb)(coco_coro_t *coro, int error_code, const char *msg);
 
 /* === Default Configuration === */
-#define COCO_DEFAULT_STACK_SIZE   (64 * 1024)   /* 64KB - 默认值，待遥测验证 */
-#define COCO_STACK_SMALL          (16 * 1024)   /* 16KB - I/O 密集，需谨慎 */
-#define COCO_STACK_MEDIUM         (32 * 1024)   /* 32KB - 通用 */
-#define COCO_STACK_LARGE          (128 * 1024)  /* 128KB - 递归/大栈帧 */
-#define COCO_MAX_COROUTINES       10000
+/** @defgroup Config Configuration Constants
+ *  @brief Default configuration values
+ *  @{
+ */
+#define COCO_DEFAULT_STACK_SIZE   (64 * 1024)   /**< 64KB - default stack size */
+#define COCO_STACK_SMALL          (16 * 1024)   /**< 16KB - I/O bound tasks, use with caution */
+#define COCO_STACK_MEDIUM         (32 * 1024)   /**< 32KB - general purpose */
+#define COCO_STACK_LARGE          (128 * 1024)  /**< 128KB - recursive/large stack frames */
+#define COCO_MAX_COROUTINES       10000         /**< Maximum number of coroutines */
+/** @} */
 
 /* === Scheduler API === */
+/** @defgroup Scheduler Scheduler API
+ *  @brief Functions for managing the coroutine scheduler
+ *  @{
+ */
 
 /**
- * 创建调度器
- * @return 调度器指针，失败返回 NULL
+ * @brief Create a new scheduler
+ * @return Scheduler pointer, or NULL on failure
+ *
+ * The scheduler manages coroutine execution, I/O events, and timers.
+ * Each scheduler has its own stack pool for memory reuse.
  */
 coco_sched_t *coco_sched_create(void);
 
 /**
- * 销毁调度器
- * @param sched 调度器指针
+ * @brief Destroy a scheduler and free all resources
+ * @param sched Scheduler pointer
+ *
+ * This will terminate all running coroutines and free associated memory.
+ * The stack pool is destroyed, returning all memory to the system.
  */
 void coco_sched_destroy(coco_sched_t *sched);
 
 /**
- * 运行调度器直到无协程
- * @param sched 调度器指针
- * @return 0 成功，负数错误码
+ * @brief Run the scheduler until all coroutines finish
+ * @param sched Scheduler pointer
+ * @return COCO_OK on success, negative error code on failure
+ *
+ * This is a blocking call that runs the event loop until there are
+ * no more ready or waiting coroutines.
  */
 int coco_sched_run(coco_sched_t *sched);
 
 /**
- * 单次调度（处理一个协程）
- * @param sched 调度器指针
- * @return 0 成功，负数错误码
+ * @brief Perform a single scheduling iteration
+ * @param sched Scheduler pointer
+ * @return COCO_OK on success, negative error code on failure
+ *
+ * Processes one ready coroutine and handles any expired timers.
+ * Useful for integrating with external event loops.
  */
 int coco_sched_run_once(coco_sched_t *sched);
 
+/**
+ * @brief Get the current scheduler for this thread
+ * @return Scheduler pointer, or NULL if no scheduler is active
+ *
+ * Each thread can have its own scheduler. This function returns
+ * the scheduler associated with the calling thread.
+ */
+coco_sched_t *coco_sched_get_current(void);
+/** @} */
+
 /* === Coroutine Lifecycle API === */
+/** @defgroup CoroutineLifecycle Coroutine Lifecycle API
+ *  @brief Functions for creating and managing coroutine lifecycles
+ *  @{
+ */
 
 /**
- * 创建协程
- * @param sched 调度器指针
- * @param entry 入口函数
- * @param arg 入口参数
- * @param stack_size 栈大小（0 使用默认值）
- * @return 协程指针，失败返回 NULL
+ * @brief Create a new coroutine
+ * @param sched Scheduler pointer
+ * @param entry Entry function
+ * @param arg Argument passed to entry function
+ * @param stack_size Stack size in bytes (0 for default)
+ * @return Coroutine pointer, or NULL on failure
+ *
+ * The coroutine is created in COCO_STATE_CREATED state and is automatically
+ * added to the ready queue. The stack is allocated from the scheduler's
+ * stack pool for memory reuse.
  */
 coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, size_t stack_size);
 
 /**
- * 退出协程（在协程内部调用）
- * @param coro 协程指针（通常使用 coco_self()）
- * @param result 返回值
+ * @brief Exit the current coroutine with a result
+ * @param coro Coroutine pointer (typically from coco_self())
+ * @param result Return value to be retrieved by coco_join()
+ *
+ * Must be called from within the coroutine. After calling, the coroutine
+ * enters COCO_STATE_DEAD state.
  */
 void coco_exit(coco_coro_t *coro, void *result);
 
 /**
- * 让出执行权（在协程内部调用）
+ * @brief Yield execution to the scheduler
+ *
+ * Must be called from within a coroutine. The coroutine remains in
+ * COCO_STATE_READY state and will be rescheduled later.
  */
 void coco_yield(void);
 
 /**
- * 等待协程结束并获取结果
- * @param coro 协程指针
- * @return 协程返回值
+ * @brief Wait for a coroutine to finish and get its result
+ * @param coro Coroutine pointer
+ * @return The result passed to coco_exit(), or NULL
+ *
+ * Blocks the current coroutine until the target coroutine finishes.
+ * Must be called from within a coroutine.
  */
 void *coco_join(coco_coro_t *coro);
 
 /**
- * 销毁协程
- * @param coro 协程指针
+ * @brief Destroy a finished coroutine
+ * @param coro Coroutine pointer
+ *
+ * The coroutine must be in COCO_STATE_DEAD state.
+ * Returns the stack to the scheduler's pool for reuse.
  */
 void coco_destroy(coco_coro_t *coro);
+/** @} */
 
 /* === Coroutine Query API === */
+/** @defgroup CoroutineQuery Coroutine Query API
+ *  @brief Functions for querying coroutine state and properties
+ *  @{
+ */
 
 /**
- * 获取当前协程
- * @return 当前协程指针，在调度器上下文返回 NULL
+ * @brief Get the currently running coroutine
+ * @return Current coroutine pointer, or NULL if not in a coroutine
  */
 coco_coro_t *coco_self(void);
 
 /**
- * 获取协程状态
- * @param coro 协程指针
- * @return 协程状态
+ * @brief Get the state of a coroutine
+ * @param coro Coroutine pointer
+ * @return Current state (COCO_STATE_DEAD if coro is NULL)
  */
 coco_state_t coco_get_state(coco_coro_t *coro);
 
 /**
- * 获取协程 ID
- * @param coro 协程指针
- * @return 协程 ID
+ * @brief Get the unique ID of a coroutine
+ * @param coro Coroutine pointer
+ * @return Unique 64-bit ID, or 0 if coro is NULL
  */
 uint64_t coco_get_id(coco_coro_t *coro);
 
 /**
- * 设置错误回调
- * @param coro 协程指针
- * @param cb 错误回调函数
+ * @brief Set the error callback for a coroutine
+ * @param coro Coroutine pointer
+ * @param cb Error callback function
+ *
+ * The callback is invoked when the coroutine encounters an error
+ * such as stack overflow.
  */
 void coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb);
 
 /**
- * 获取协程栈使用量
- * @param coro 协程指针
- * @return 已使用字节数，失败返回 0
+ * @brief Set the priority of a coroutine
+ * @param coro Coroutine pointer
+ * @param priority Priority level (see @ref CoroutinePriorities)
  *
- * 注意：只采样 yield/exit 点的栈使用，可能低估深度递归峰值
+ * Higher priority coroutines are scheduled before lower priority ones.
  */
-size_t coco_get_stack_usage(coco_coro_t *coro);
-
-/* === Channel API === */
+void coco_set_priority(coco_coro_t *coro, coco_priority_t priority);
 
 /**
- * 创建 channel
- * @param capacity 缓冲区大小（0 = 无缓冲）
- * @return channel 指针，失败返回 NULL
+ * @brief Get the priority of a coroutine
+ * @param coro Coroutine pointer
+ * @return Priority level (COCO_PRIORITY_NORMAL if coro is NULL)
+ */
+coco_priority_t coco_get_priority(coco_coro_t *coro);
+
+/**
+ * @brief Get the stack usage of a coroutine
+ * @param coro Coroutine pointer
+ * @return Used bytes, or 0 on error
+ *
+ * Note: This samples at yield/exit points and may underestimate
+ * the peak usage during deep recursion.
+ */
+size_t coco_get_stack_usage(coco_coro_t *coro);
+/** @} */
+
+/* === Channel API === */
+/** @defgroup Channel Channel API
+ *  @brief Inter-coroutine communication via channels
+ *  @{
+ */
+
+/**
+ * @brief Create a new channel
+ * @param capacity Buffer size (0 = unbuffered/synchronous)
+ * @return Channel pointer, or NULL on failure
  */
 coco_channel_t *coco_channel_create(size_t capacity);
 
 /**
- * 发送数据（阻塞）
- * @param ch channel 指针
- * @param value 数据指针
- * @return COCO_OK 成功，负数错误码
+ * @brief Send a value through the channel (blocking)
+ * @param ch Channel pointer
+ * @param value Value to send
+ * @return COCO_OK on success, COCO_ERROR_CHANNEL_CLOSED if closed
+ *
+ * For buffered channels, returns immediately if buffer has space.
+ * For unbuffered channels, blocks until a receiver is ready.
  */
 int coco_channel_send(coco_channel_t *ch, void *value);
 
 /**
- * 接收数据（阻塞）
- * @param ch channel 指针
- * @param value 接收数据指针的指针
- * @return COCO_OK 成功，负数错误码
+ * @brief Receive a value from the channel (blocking)
+ * @param ch Channel pointer
+ * @param value Pointer to receive the value
+ * @return COCO_OK on success, COCO_ERROR_CHANNEL_CLOSED if closed
+ *
+ * Blocks until a value is available or the channel is closed.
  */
 int coco_channel_recv(coco_channel_t *ch, void **value);
 
 /**
- * 关闭 channel
- * @param ch channel 指针
+ * @brief Close a channel
+ * @param ch Channel pointer
+ *
+ * After closing, senders will receive COCO_ERROR_CHANNEL_CLOSED.
+ * Receivers can still drain remaining buffered values.
  */
 void coco_channel_close(coco_channel_t *ch);
 
 /**
- * 销毁 channel
- * @param ch channel 指针
+ * @brief Destroy a channel
+ * @param ch Channel pointer
+ *
+ * The channel must be closed first. Frees all resources.
  */
 void coco_channel_destroy(coco_channel_t *ch);
+/** @} */
 
 /* === I/O API === */
+/** @defgroup IO I/O API
+ *  @brief Non-blocking I/O operations for coroutines
+ *  @{
+ */
 
 /**
- * 协程读取（阻塞）
- * @param fd 文件描述符
- * @param buf 缓冲区
- * @param count 读取字节数
- * @return 实际读取字节数，负数错误码
+ * @brief Read from a file descriptor (blocking for coroutines)
+ * @param fd File descriptor
+ * @param buf Buffer to read into
+ * @param count Maximum bytes to read
+ * @return Bytes read, or negative error code
+ *
+ * Yields to the scheduler while waiting for data.
  */
 int coco_read(int fd, void *buf, size_t count);
 
 /**
- * 协程写入（阻塞）
- * @param fd 文件描述符
- * @param buf 缓冲区
- * @param count 写入字节数
- * @return 实际写入字节数，负数错误码
+ * @brief Write to a file descriptor (blocking for coroutines)
+ * @param fd File descriptor
+ * @param buf Buffer to write from
+ * @param count Maximum bytes to write
+ * @return Bytes written, or negative error code
+ *
+ * Yields to the scheduler while waiting for write readiness.
  */
 int coco_write(int fd, const void *buf, size_t count);
 
 /**
- * 协程 accept（阻塞）
- * @param fd 监听 socket
- * @param addr 客户端地址
- * @param addrlen 地址长度
- * @return 新 socket，负数错误码
+ * @brief Accept a connection (blocking for coroutines)
+ * @param fd Listening socket
+ * @param addr Client address buffer (struct sockaddr*)
+ * @param addrlen Address buffer length (input/output)
+ * @return New socket fd, or negative error code
+ *
+ * Yields to the scheduler while waiting for a connection.
  */
 int coco_accept(int fd, void *addr, size_t *addrlen);
 
 /**
- * 协程 connect（阻塞）
- * @param fd socket
- * @param addr 目标地址
- * @param addrlen 地址长度
- * @return 0 成功，负数错误码
+ * @brief Connect to a remote host (blocking for coroutines)
+ * @param fd Socket
+ * @param addr Remote address (struct sockaddr*)
+ * @param addrlen Address length
+ * @return COCO_OK on success, negative error code on failure
+ *
+ * Yields to the scheduler while connecting.
  */
 int coco_connect(int fd, const void *addr, size_t addrlen);
 
 /**
- * 协程 sleep
- * @param ms 毫秒数
+ * @brief Sleep for a duration
+ * @param ms Milliseconds to sleep
  * @return COCO_OK
+ *
+ * Yields to the scheduler. Other coroutines can run during the sleep.
  */
 int coco_sleep(uint64_t ms);
+/** @} */
 
 /* === Timer API === */
+/** @defgroup Timer Timer API
+ *  @brief Timer management for delayed execution
+ *  @{
+ */
 
 /**
- * 创建定时器
- * @param delay_ms 延迟毫秒数
- * @param callback 回调函数
- * @param arg 回调参数
- * @return 定时器指针，失败返回 NULL
+ * @brief Create a one-shot timer
+ * @param delay_ms Delay in milliseconds
+ * @param callback Callback function to invoke
+ * @param arg Argument passed to callback
+ * @return Timer pointer, or NULL on failure
+ *
+ * The timer is automatically freed after the callback executes.
+ * Use coco_timer_cancel() to cancel before it fires.
  */
 coco_timer_t *coco_timer(uint64_t delay_ms, void (*callback)(void*), void *arg);
 
 /**
- * 取消定时器
- * @param timer 定时器指针
+ * @brief Cancel a timer (O(1) operation)
+ * @param timer Timer pointer
+ *
+ * Removes the timer from the timing wheel and frees it.
+ * Safe to call even if the timer has already fired.
  */
 void coco_timer_cancel(coco_timer_t *timer);
+
+/**
+ * @brief Create a timer with explicit scheduler
+ * @param sched Scheduler pointer
+ * @param delay_ms Delay in milliseconds
+ * @param callback Callback function to invoke
+ * @param arg Argument passed to callback
+ * @return Timer pointer, or NULL on failure
+ *
+ * Explicit scheduler version for multi-scheduler scenarios.
+ * Each thread can have its own scheduler via TLS.
+ */
+coco_timer_t *coco_timer_ex(coco_sched_t *sched, uint64_t delay_ms, void (*callback)(void*), void *arg);
+/** @} */
+
+/* === Cancellation API === */
+/** @defgroup Cancellation Cancellation API
+ *  @brief Coroutine cancellation support
+ *  @{
+ */
+
+/**
+ * @brief Cancel a coroutine
+ * @param coro Coroutine to cancel
+ * @return COCO_OK on success, COCO_ERROR on failure
+ *
+ * The coroutine will receive COCO_ERROR_CANCELLED at its next yield point.
+ */
+int coco_cancel(coco_coro_t *coro);
+
+/**
+ * @brief Check if the current coroutine is cancelled
+ * @return 1 if cancelled, 0 otherwise
+ *
+ * Should be called periodically in long-running coroutines
+ * to enable cooperative cancellation.
+ */
+int coco_cancelled(void);
+/** @} */
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,59 @@
+/**
+ * cancel.c - 协程取消机制
+ */
+
+#include "../coco_internal.h"
+#include <stdlib.h>
+
+/* 外部全局变量（在 coro.c 中定义，使用 TLS） */
+extern _Thread_local coco_sched_t *g_current_sched;
+extern _Thread_local coco_coro_t *g_current_coro;
+
+/**
+ * coco_cancel - 取消协程
+ *
+ * @param coro 要取消的协程
+ * @return COCO_OK 成功，COCO_ERROR 失败
+ *
+ * 设置取消标志并唤醒协程。协程恢复后应检查 coco_cancelled()。
+ */
+int coco_cancel(coco_coro_t *coro) {
+    if (!coro) {
+        return COCO_ERROR;
+    }
+
+    /* 死协程或已溢出协程无法取消 */
+    if (coro->state == COCO_STATE_DEAD || coro->state == COCO_STATE_OVERFLOW) {
+        return COCO_ERROR;
+    }
+
+    coro->cancelled = 1;
+
+    /* 如果协程在等待状态，唤醒它 */
+    coco_sched_t *sched = g_current_sched;
+    if (coro->state == COCO_STATE_WAITING && sched) {
+        /* 清除 wait_fd */
+        if (coro->wait_fd >= 0) {
+            coco_poll_unregister(sched, coro->wait_fd);
+            coro->wait_fd = -1;
+        }
+        enqueue_ready(sched, coro);
+    }
+
+    return COCO_OK;
+}
+
+/**
+ * coco_cancelled - 检查协程是否被取消
+ *
+ * @return 1 已取消，0 未取消
+ *
+ * 协程应在阻塞操作后调用此函数检查取消状态。
+ */
+int coco_cancelled(void) {
+    coco_coro_t *coro = g_current_coro;
+    if (!coro) {
+        return 0;
+    }
+    return coro->cancelled;
+}

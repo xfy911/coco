@@ -8,9 +8,9 @@
 #include <string.h>
 #include <unistd.h>
 
-/* 全局调度器指针（单线程模式） */
-coco_sched_t *g_current_sched = NULL;
-coco_coro_t *g_current_coro = NULL;
+/* 线程局部存储（多线程模式） */
+_Thread_local coco_sched_t *g_current_sched = NULL;
+_Thread_local coco_coro_t *g_current_coro = NULL;
 
 /* 协程入口包装函数 */
 static void coro_entry_wrapper(void *arg) {
@@ -21,18 +21,27 @@ static void coro_entry_wrapper(void *arg) {
     coco_exit(coro, NULL);
 }
 
-/* 入队：添加到尾部 */
-void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
-    coro->state = COCO_STATE_READY;
-    coro->prev = sched->ready_tail;
-    coro->next = NULL;
+/* 获取当前时间戳（毫秒） */
+static uint64_t get_timestamp_ms(void) {
+    return get_current_time_ms_internal();
+}
 
-    if (sched->ready_tail) {
-        sched->ready_tail->next = coro;
+/* 入队：添加到对应优先级队列尾部 */
+void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
+    coco_priority_t prio = coro->priority;
+
+    coro->state = COCO_STATE_READY;
+    coro->prev = sched->ready_tails[prio];
+    coro->next = NULL;
+    coro->ready_timestamp = get_timestamp_ms();
+
+    if (sched->ready_tails[prio]) {
+        sched->ready_tails[prio]->next = coro;
     } else {
-        sched->ready_head = coro;
+        sched->ready_heads[prio] = coro;
     }
-    sched->ready_tail = coro;
+    sched->ready_tails[prio] = coro;
+    sched->ready_counts[prio]++;
     sched->ready_count++;
 }
 
@@ -91,6 +100,9 @@ coco_sched_t *coco_sched_create(void) {
         return NULL;
     }
 
+    /* 初始化老化阈值：100ms 后提升优先级 */
+    sched->aging_threshold_ms = 100;
+
     return sched;
 }
 
@@ -137,22 +149,80 @@ void coco_sched_destroy(coco_sched_t *sched) {
     }
 }
 
-/* 出队：从头部取出 */
+/* 检查并执行老化：提升等待时间过长的协程优先级 */
+static void apply_aging(coco_sched_t *sched) {
+    if (sched->aging_threshold_ms == 0) {
+        return;
+    }
+
+    uint64_t now = get_timestamp_ms();
+
+    /* 从低优先级开始检查（IDLE -> LOW -> NORMAL）*/
+    for (int p = COCO_PRIORITY_COUNT - 1; p > 0; p--) {
+        coco_coro_t *coro = sched->ready_heads[p];
+        while (coro) {
+            coco_coro_t *next = coro->next;
+
+            /* 检查是否等待时间超过阈值 */
+            if (coro->ready_timestamp > 0 &&
+                (now - coro->ready_timestamp) >= sched->aging_threshold_ms) {
+
+                /* 从当前优先级队列移除 */
+                if (coro->prev) {
+                    coro->prev->next = coro->next;
+                } else {
+                    sched->ready_heads[p] = coro->next;
+                }
+                if (coro->next) {
+                    coro->next->prev = coro->prev;
+                } else {
+                    sched->ready_tails[p] = coro->prev;
+                }
+                sched->ready_counts[p]--;
+
+                /* 提升优先级 */
+                coco_priority_t new_prio = (coco_priority_t)(p - 1);
+                coro->priority = new_prio;
+                coro->ready_timestamp = now;
+
+                /* 加入新优先级队列尾部 */
+                coro->prev = sched->ready_tails[new_prio];
+                coro->next = NULL;
+                if (sched->ready_tails[new_prio]) {
+                    sched->ready_tails[new_prio]->next = coro;
+                } else {
+                    sched->ready_heads[new_prio] = coro;
+                }
+                sched->ready_tails[new_prio] = coro;
+                sched->ready_counts[new_prio]++;
+            }
+
+            coro = next;
+        }
+    }
+}
+
+/* 出队：从最高优先级队列头部取出（先执行老化检查） */
 static coco_coro_t *dequeue_ready(coco_sched_t *sched) {
-    coco_coro_t *coro = sched->ready_head;
-    if (!coro) {
-        return NULL;
-    }
+    /* 执行老化检查 */
+    apply_aging(sched);
 
-    sched->ready_head = coro->next;
-    if (sched->ready_head) {
-        sched->ready_head->prev = NULL;
-    } else {
-        sched->ready_tail = NULL;
+    /* 从高到低遍历优先级 */
+    for (int p = 0; p < COCO_PRIORITY_COUNT; p++) {
+        coco_coro_t *coro = sched->ready_heads[p];
+        if (coro) {
+            sched->ready_heads[p] = coro->next;
+            if (sched->ready_heads[p]) {
+                sched->ready_heads[p]->prev = NULL;
+            } else {
+                sched->ready_tails[p] = NULL;
+            }
+            sched->ready_counts[p]--;
+            sched->ready_count--;
+            return coro;
+        }
     }
-
-    sched->ready_count--;
-    return coro;
+    return NULL;
 }
 
 /* 切换到协程 */
@@ -322,6 +392,8 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     coro->arg = arg;
     coro->wait_fd = -1;
     coro->stack_high_water_mark = 0;  /* 遥测初始化 */
+    coro->priority = COCO_PRIORITY_NORMAL;  /* 默认优先级 */
+    coro->ready_timestamp = 0;
 
     /* 添加到协程池 */
     if (coro->id < sched->coro_capacity) {
@@ -428,4 +500,21 @@ size_t coco_get_stack_usage(coco_coro_t *coro) {
         return 0;
     }
     return (size_t)coro->stack_top - coro->stack_high_water_mark;
+}
+
+void coco_set_priority(coco_coro_t *coro, coco_priority_t priority) {
+    if (coro && priority >= 0 && priority < COCO_PRIORITY_COUNT) {
+        coro->priority = priority;
+    }
+}
+
+coco_priority_t coco_get_priority(coco_coro_t *coro) {
+    if (!coro) {
+        return COCO_PRIORITY_NORMAL;
+    }
+    return coro->priority;
+}
+
+coco_sched_t *coco_sched_get_current(void) {
+    return g_current_sched;
 }

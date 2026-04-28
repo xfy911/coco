@@ -8,9 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* 外部全局变量（在 coro.c 中定义） */
-extern coco_sched_t *g_current_sched;
-extern coco_coro_t *g_current_coro;
+/* 外部全局变量（TLS，在 coro.c 中定义） */
+extern _Thread_local coco_sched_t *g_current_sched;
+extern _Thread_local coco_coro_t *g_current_coro;
 
 /* 等待队列节点 */
 typedef struct wait_node {
@@ -149,6 +149,11 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     /* 恢复后释放自己的等待节点 */
     free(node);
 
+    /* 检查是否被取消 */
+    if (coro->cancelled) {
+        return COCO_ERROR_CANCELLED;
+    }
+
     /* 恢复后检查 channel 是否关闭 */
     if (ch->closed) {
         return COCO_ERROR_CHANNEL_CLOSED;
@@ -217,6 +222,12 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
     enqueue_wait(&ch->recv_wait_head, &ch->recv_wait_tail, node);
     coro->state = COCO_STATE_WAITING;
     coco_yield();
+
+    /* 检查是否被取消 */
+    if (coro->cancelled) {
+        free(node);
+        return COCO_ERROR_CANCELLED;
+    }
 
     /* 恢复后获取值 */
     if (ch->closed && !node->value) {

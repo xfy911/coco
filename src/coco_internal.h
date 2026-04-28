@@ -48,6 +48,11 @@ struct coco_coro {
 
     size_t stack_high_water_mark;  /* 栈使用峰值（最低栈指针地址） */
 
+    int cancelled;                 /* 取消标志 */
+
+    coco_priority_t priority;      /* 协程优先级 */
+    uint64_t ready_timestamp;      /* 进入就绪队列的时间（用于老化） */
+
     coco_error_cb error_cb;
 };
 
@@ -57,13 +62,22 @@ typedef struct coco_timer_wheel coco_timer_wheel_t;
 /* 栈池结构（前置声明） */
 typedef struct stack_pool stack_pool_t;
 
+/* FD 表结构 */
+typedef struct fd_table {
+    coco_coro_t **table;      /* FD 到协程的映射数组 */
+    uint32_t capacity;        /* 当前容量 */
+    uint32_t max_fd;          /* 已注册的最大 FD 值 */
+} fd_table_t;
+
 /* 调度器结构 */
 struct coco_sched {
     coco_coro_t *current;      /* 当前运行协程 */
 
-    coco_coro_t *ready_head;   /* 运行队列（双向链表） */
-    coco_coro_t *ready_tail;
-    uint32_t ready_count;
+    /* 多优先级运行队列 */
+    coco_coro_t *ready_heads[COCO_PRIORITY_COUNT];   /* 各优先级的队列头 */
+    coco_coro_t *ready_tails[COCO_PRIORITY_COUNT];   /* 各优先级的队列尾 */
+    uint32_t ready_counts[COCO_PRIORITY_COUNT];      /* 各优先级的协程数 */
+    uint32_t ready_count;                             /* 总就绪协程数 */
 
     coco_coro_t **coro_table;  /* 协程池（ID 映射） */
     uint32_t coro_count;
@@ -79,6 +93,12 @@ struct coco_sched {
 
     /* 栈池 */
     stack_pool_t *stack_pool;  /* 栈池（单线程设计，无需同步） */
+
+    /* FD 表 */
+    fd_table_t *fd_table;      /* FD 到协程的映射 */
+
+    /* 老化配置 */
+    uint64_t aging_threshold_ms;  /* 老化阈值（等待多久后提升优先级） */
 };
 
 /* 上下文 API (汇编实现) */
@@ -115,5 +135,12 @@ void coco_poll_cleanup(coco_sched_t *sched);
 int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short events);
 void coco_poll_unregister(coco_sched_t *sched, int fd);
 int coco_poll_wait(coco_sched_t *sched, int timeout_ms);
+
+/* FD 表 API */
+fd_table_t *fd_table_create(uint32_t initial_capacity);
+void fd_table_destroy(fd_table_t *ft);
+coco_coro_t *fd_table_get(fd_table_t *ft, int fd);
+int fd_table_set(fd_table_t *ft, int fd, coco_coro_t *coro);
+void fd_table_clear(fd_table_t *ft, int fd);
 
 #endif /* COCO_INTERNAL_H */

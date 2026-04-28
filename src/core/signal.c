@@ -12,11 +12,11 @@
 #include <setjmp.h>
 #include <unistd.h>
 
-/* 全局跳转缓冲区（用于恢复到调度器） */
-static sigjmp_buf g_overflow_jmp;
+/* 线程局部跳转缓冲区（用于恢复到调度器） */
+static _Thread_local sigjmp_buf g_overflow_jmp;
 
-/* 全局调度器指针（用于恢复） */
-static coco_sched_t *g_overflow_sched = NULL;
+/* 线程局部调度器指针（用于恢复） */
+static _Thread_local coco_sched_t *g_overflow_sched = NULL;
 
 /* 信号栈大小（需要足够大以运行 handler） */
 #define SIGNAL_STACK_SIZE (64 * 1024)
