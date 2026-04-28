@@ -12,9 +12,16 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdint.h>
 
 #define PORT 8888
 #define BUFFER_SIZE 1024
+
+/* 传递给 accept_loop 的参数 */
+struct accept_arg {
+    coco_sched_t *sched;
+    int fd;
+};
 
 /* 设置 fd 为非阻塞 */
 static int set_nonblock(int fd) {
@@ -24,7 +31,7 @@ static int set_nonblock(int fd) {
 
 /* 处理客户端连接 */
 void handle_client(void *arg) {
-    int client_fd = *(int*)arg;
+    int client_fd = (int)(intptr_t)arg;
     char buffer[BUFFER_SIZE];
 
     printf("Client connected, fd=%d\n", client_fd);
@@ -48,7 +55,9 @@ void handle_client(void *arg) {
 
 /* 接受连接协程 */
 void accept_loop(void *arg) {
-    int listen_fd = *(int*)arg;
+    struct accept_arg *a = (struct accept_arg *)arg;
+    coco_sched_t *sched = a->sched;
+    int listen_fd = a->fd;
 
     printf("Accept loop started on port %d\n", PORT);
 
@@ -63,10 +72,8 @@ void accept_loop(void *arg) {
 
         set_nonblock(client_fd);
 
-        /* 为每个客户端创建新协程 */
-        coco_sched_t *sched = coco_self(); /* 这里需要获取当前调度器 */
-        /* 注：实际实现中应通过其他方式获取调度器 */
-        coco_create(sched, handle_client, &client_fd, 0);
+        /* 为每个客户端创建新协程，fd 通过值传递避免生命周期风险 */
+        coco_create(sched, handle_client, (void *)(intptr_t)client_fd, 0);
     }
 }
 
@@ -104,7 +111,8 @@ int main(void) {
 
     /* 创建调度器和接受协程 */
     coco_sched_t *sched = coco_sched_create();
-    coco_create(sched, accept_loop, &listen_fd, 0);
+    struct accept_arg a = { .sched = sched, .fd = listen_fd };
+    coco_create(sched, accept_loop, &a, 0);
 
     /* 运行服务器 */
     coco_sched_run(sched);
