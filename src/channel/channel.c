@@ -244,21 +244,23 @@ void coco_channel_close(coco_channel_t *ch) {
     coco_sched_t *sched = g_current_sched;
 
     /* 唤醒所有等待的接收者 */
+    /* 注意：不释放 wait_node，让接收者恢复后自己释放 */
     while (ch->recv_wait_head) {
         wait_node_t *node = dequeue_wait(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (sched && node->coro) {
             enqueue_ready(sched, node->coro);
         }
-        free(node);
+        /* 不释放 node - 接收者恢复后会检查 closed 标志并释放 */
     }
 
     /* 唤醒所有等待的发送者 */
+    /* 注意：不释放 wait_node，让发送者恢复后自己释放 */
     while (ch->send_wait_head) {
         wait_node_t *node = dequeue_wait(&ch->send_wait_head, &ch->send_wait_tail);
         if (sched && node->coro) {
             enqueue_ready(sched, node->coro);
         }
-        free(node);
+        /* 不释放 node - 发送者恢复后会检查 closed 标志并释放 */
     }
 }
 
