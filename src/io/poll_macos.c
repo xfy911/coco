@@ -28,6 +28,13 @@ int coco_poll_init(coco_sched_t *sched) {
         return COCO_ERROR;
     }
 
+    /* 初始化配置 */
+    sched->poll_config.backend_forced = false;
+    sched->poll_config.forced_backend = COCO_IO_BACKEND_AUTO;
+
+    /* macOS 只支持 kqueue */
+    sched->poll_backend = COCO_POLL_KQUEUE;
+
     /* 创建 kqueue 实例 */
     sched->poll_fd = kqueue();
     if (sched->poll_fd < 0) {
@@ -43,6 +50,41 @@ int coco_poll_init(coco_sched_t *sched) {
     }
 
     return COCO_OK;
+}
+
+/**
+ * coco_sched_set_io_backend - 设置 I/O 后端
+ *
+ * macOS 只支持 kqueue，其他后端请求返回错误。
+ */
+int coco_sched_set_io_backend(coco_sched_t *sched, coco_io_backend_t backend) {
+    if (!sched) {
+        return COCO_ERROR;
+    }
+
+    /* macOS 只支持 AUTO (kqueue) */
+    if (backend != COCO_IO_BACKEND_AUTO) {
+        return COCO_ERROR;  /* macOS 不支持 epoll/io_uring */
+    }
+
+    sched->poll_config.forced_backend = backend;
+    sched->poll_config.backend_forced = false;
+
+    return COCO_OK;
+}
+
+/**
+ * coco_sched_get_io_backend - 获取当前 I/O 后端
+ *
+ * macOS 总是返回 AUTO (使用 kqueue)。
+ */
+coco_io_backend_t coco_sched_get_io_backend(coco_sched_t *sched) {
+    if (!sched) {
+        return COCO_IO_BACKEND_AUTO;
+    }
+
+    /* macOS 使用 kqueue，映射到 AUTO */
+    return COCO_IO_BACKEND_AUTO;
 }
 
 /**

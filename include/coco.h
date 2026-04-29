@@ -104,6 +104,41 @@ typedef void (*coco_error_cb)(coco_coro_t *coro, int error_code, const char *msg
 #define COCO_MAX_COROUTINES       10000         /**< Maximum number of coroutines */
 /** @} */
 
+/* === I/O Backend Selection === */
+/** @defgroup IOBackend I/O Backend Selection
+ *  @brief Control over I/O backend selection
+ *  @{
+ */
+
+/**
+ * @brief I/O backend types
+ */
+typedef enum coco_io_backend {
+    COCO_IO_BACKEND_AUTO,    /**< Auto-select: io_uring on Linux 5.1+, epoll otherwise */
+    COCO_IO_BACKEND_EPOLL,   /**< Force epoll backend (Linux only) */
+    COCO_IO_BACKEND_IOURING  /**< Force io_uring backend (Linux 5.1+ only) */
+} coco_io_backend_t;
+
+/**
+ * @brief Set the I/O backend for a scheduler
+ * @param sched Scheduler pointer
+ * @param backend Backend to use
+ * @return COCO_OK on success, COCO_ERROR on failure
+ *
+ * Must be called before coco_sched_run(). If the requested backend
+ * is unavailable, returns COCO_ERROR.
+ */
+int coco_sched_set_io_backend(coco_sched_t *sched, coco_io_backend_t backend);
+
+/**
+ * @brief Get the current I/O backend
+ * @param sched Scheduler pointer
+ * @return Current backend type
+ */
+coco_io_backend_t coco_sched_get_io_backend(coco_sched_t *sched);
+
+/** @} */
+
 /* === Scheduler API === */
 /** @defgroup Scheduler Scheduler API
  *  @brief Functions for managing the coroutine scheduler

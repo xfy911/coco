@@ -34,14 +34,32 @@ static bool kernel_version_at_least(int major, int minor) {
 /**
  * coco_poll_init - 初始化 I/O 多路复用
  *
- * 自动选择 io_uring (Linux 5.1+) 或 epoll。
+ * 根据配置选择 io_uring 或 epoll。
  */
 int coco_poll_init(coco_sched_t *sched) {
     if (!sched) {
         return COCO_ERROR;
     }
 
-    /* 尝试 io_uring (Linux 5.1+) */
+    /* 初始化配置 */
+    sched->poll_config.backend_forced = false;
+    sched->poll_config.forced_backend = COCO_IO_BACKEND_AUTO;
+
+    /* 检查是否强制选择后端 */
+    if (sched->poll_config.backend_forced) {
+        if (sched->poll_config.forced_backend == COCO_IO_BACKEND_IOURING) {
+            /* 强制 io_uring */
+            if (!kernel_version_at_least(5, 1)) {
+                return COCO_ERROR;  /* 内核版本不支持 */
+            }
+            return coco_poll_init_iouring(sched);
+        } else if (sched->poll_config.forced_backend == COCO_IO_BACKEND_EPOLL) {
+            /* 强制 epoll */
+            goto use_epoll;
+        }
+    }
+
+    /* 自动选择：尝试 io_uring (Linux 5.1+) */
     if (kernel_version_at_least(5, 1)) {
         if (coco_poll_init_iouring(sched) == COCO_OK) {
             return COCO_OK;
@@ -49,6 +67,7 @@ int coco_poll_init(coco_sched_t *sched) {
         /* io_uring 初始化失败，回退 epoll */
     }
 
+use_epoll:
     /* 使用 epoll */
     sched->poll_fd = epoll_create1(EPOLL_CLOEXEC);
     if (sched->poll_fd < 0) {
@@ -66,6 +85,43 @@ int coco_poll_init(coco_sched_t *sched) {
     }
 
     return COCO_OK;
+}
+
+/**
+ * coco_sched_set_io_backend - 设置 I/O 后端
+ */
+int coco_sched_set_io_backend(coco_sched_t *sched, coco_io_backend_t backend) {
+    if (!sched) {
+        return COCO_ERROR;
+    }
+
+    /* 必须在调度器初始化之前调用 */
+    if (sched->poll_fd >= 0 || sched->iouring) {
+        return COCO_ERROR;  /* 已初始化，无法更改 */
+    }
+
+    sched->poll_config.forced_backend = backend;
+    sched->poll_config.backend_forced = (backend != COCO_IO_BACKEND_AUTO);
+
+    return COCO_OK;
+}
+
+/**
+ * coco_sched_get_io_backend - 获取当前 I/O 后端
+ */
+coco_io_backend_t coco_sched_get_io_backend(coco_sched_t *sched) {
+    if (!sched) {
+        return COCO_IO_BACKEND_AUTO;
+    }
+
+    switch (sched->poll_backend) {
+        case COCO_POLL_IOURING:
+            return COCO_IO_BACKEND_IOURING;
+        case COCO_POLL_EPOLL:
+            return COCO_IO_BACKEND_EPOLL;
+        default:
+            return COCO_IO_BACKEND_AUTO;
+    }
 }
 
 /**

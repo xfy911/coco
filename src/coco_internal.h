@@ -105,6 +105,12 @@ typedef enum {
     COCO_POLL_IOURING     /* Linux io_uring */
 } coco_poll_backend_t;
 
+/* 强制后端选择标志 */
+typedef struct {
+    coco_io_backend_t forced_backend;  /* 用户强制选择的后端 */
+    bool backend_forced;               /* 是否强制选择 */
+} coco_poll_config_t;
+
 /* io_uring 上下文（前置声明） */
 typedef struct coco_iouring coco_iouring_t;
 
@@ -142,6 +148,9 @@ struct coco_sched {
 
     /* FD 表 */
     fd_table_t *fd_table;      /* FD 到协程的映射 */
+
+    /* I/O 后端配置 */
+    coco_poll_config_t poll_config;  /* 后端强制选择配置 */
 
     /* 老化配置 */
     uint64_t aging_threshold_ms;  /* 老化阈值（等待多久后提升优先级） */
