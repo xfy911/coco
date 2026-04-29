@@ -61,6 +61,7 @@ set(CHANNEL_SOURCES
 set(IO_SOURCES
     src/io/event_loop.c
     src/io/fd_table.c
+    src/io/netpoller_mt.c
 )
 
 # 平台特定源文件
@@ -144,6 +145,7 @@ if(COCO_BUILD_TESTS)
         test_runq
         test_sched
         test_channel_mt
+        test_netpoller_mt
     )
 
     foreach(test_name ${UNIT_TESTS})
