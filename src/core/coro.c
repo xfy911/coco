@@ -43,6 +43,9 @@ void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
     sched->ready_tails[prio] = coro;
     sched->ready_counts[prio]++;
     sched->ready_count++;
+
+    /* 设置位图对应位 */
+    sched->ready_bitmap |= (1U << prio);
 }
 
 /* === 调度器 API === */
@@ -180,6 +183,11 @@ static void apply_aging(coco_sched_t *sched) {
                 }
                 sched->ready_counts[p]--;
 
+                /* 如果队列空了，清除位图对应位 */
+                if (sched->ready_heads[p] == NULL) {
+                    sched->ready_bitmap &= ~(1U << p);
+                }
+
                 /* 提升优先级 */
                 coco_priority_t new_prio = (coco_priority_t)(p - 1);
                 coro->priority = new_prio;
@@ -195,6 +203,9 @@ static void apply_aging(coco_sched_t *sched) {
                 }
                 sched->ready_tails[new_prio] = coro;
                 sched->ready_counts[new_prio]++;
+
+                /* 设置新优先级的位图位 */
+                sched->ready_bitmap |= (1U << new_prio);
             }
 
             coro = next;
@@ -207,20 +218,26 @@ static coco_coro_t *dequeue_ready(coco_sched_t *sched) {
     /* 执行老化检查 */
     apply_aging(sched);
 
-    /* 从高到低遍历优先级 */
-    for (int p = 0; p < COCO_PRIORITY_COUNT; p++) {
-        coco_coro_t *coro = sched->ready_heads[p];
-        if (coro) {
-            sched->ready_heads[p] = coro->next;
-            if (sched->ready_heads[p]) {
-                sched->ready_heads[p]->prev = NULL;
-            } else {
-                sched->ready_tails[p] = NULL;
-            }
-            sched->ready_counts[p]--;
-            sched->ready_count--;
-            return coro;
+    /* 使用位图快速定位最高优先级非空队列 */
+    if (sched->ready_bitmap == 0) {
+        return NULL;
+    }
+
+    /* __builtin_ctz 返回最低位 1 的位置，即最高优先级 */
+    int p = __builtin_ctz(sched->ready_bitmap);
+    coco_coro_t *coro = sched->ready_heads[p];
+    if (coro) {
+        sched->ready_heads[p] = coro->next;
+        if (sched->ready_heads[p]) {
+            sched->ready_heads[p]->prev = NULL;
+        } else {
+            sched->ready_tails[p] = NULL;
+            /* 队列空了，清除位图对应位 */
+            sched->ready_bitmap &= ~(1U << p);
         }
+        sched->ready_counts[p]--;
+        sched->ready_count--;
+        return coro;
     }
     return NULL;
 }
