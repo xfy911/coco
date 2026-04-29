@@ -40,7 +40,10 @@ set(CORE_SOURCES
     src/core/stack.c
     src/core/signal.c
     src/core/stack_pool.c
+    src/core/stack_pool_multi.c
     src/core/cancel.c
+    src/sched/locked_queue.c
+    src/sched/safepoint.c
 )
 
 set(TIMER_SOURCES
@@ -130,6 +133,9 @@ if(COCO_BUILD_TESTS)
         test_exit
         test_sleep
         test_aging_trigger
+        test_stack_pool_multi
+        test_locked_queue
+        test_safepoint
     )
 
     foreach(test_name ${UNIT_TESTS})
