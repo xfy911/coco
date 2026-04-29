@@ -63,6 +63,9 @@ struct coco_coro {
 
     coco_error_cb error_cb;
 
+    /* Context 关联 (Phase 2) */
+    struct coco_context *context;  /* 关联的 context */
+
     /* 嵌入式 Channel 等待节点 */
     struct {
         coco_coro_t *next_waiter;  /* 等待队列下一节点 */
