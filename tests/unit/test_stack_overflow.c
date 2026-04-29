@@ -12,8 +12,8 @@ static int overflow_detected = 0;
 static coco_coro_t *overflow_coro = NULL;
 
 void overflow_error_cb(coco_coro_t *coro, int error_code, const char *msg) {
-    printf("Error callback triggered: coro_id=%lu, code=%d, msg=%s\n",
-           coro->id, error_code, msg);
+    printf("Error callback triggered: coro_id=%llu, code=%d, msg=%s\n",
+           (unsigned long long)coro->id, error_code, msg);
     overflow_detected = 1;
     overflow_coro = coro;
 }

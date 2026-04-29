@@ -18,6 +18,7 @@ static volatile int counter = 0;
 
 /* 协程入口函数 */
 static void coro_entry(void *arg) {
+    (void)arg;
     while (1) {
         counter++;
         coco_ctx_switch(&coro_ctx, &main_ctx);

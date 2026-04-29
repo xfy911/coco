@@ -14,6 +14,7 @@ _Thread_local coco_coro_t *g_current_coro = NULL;
 
 /* 协程入口包装函数 */
 static void coro_entry_wrapper(void *arg) {
+    (void)arg;
     coco_coro_t *coro = coco_self();
     if (coro && coro->entry) {
         coro->entry(coro->arg);
