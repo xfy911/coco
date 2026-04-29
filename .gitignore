@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 build_coverage/
+build_test/
 cmake-build-*/
 Testing/
 *.o
