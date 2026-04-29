@@ -46,6 +46,7 @@ set(CORE_SOURCES
     src/sched/safepoint.c
     src/sched/global_sched.c
     src/sched/runq.c
+    src/sched/sched.c
 )
 
 set(TIMER_SOURCES
@@ -140,6 +141,7 @@ if(COCO_BUILD_TESTS)
         test_safepoint
         test_global_sched
         test_runq
+        test_sched
     )
 
     foreach(test_name ${UNIT_TESTS})
