@@ -131,6 +131,7 @@ if(COCO_BUILD_TESTS)
         bench_switch
         bench_channel
         bench_io
+        bench_io_backend
     )
 
     foreach(bench_name ${BENCH_TESTS})
