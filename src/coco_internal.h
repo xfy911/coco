@@ -87,6 +87,7 @@ struct coco_sched {
     uint32_t ready_counts[COCO_PRIORITY_COUNT];      /* 各优先级的协程数 */
     uint32_t ready_count;                             /* 总就绪协程数 */
     uint32_t ready_bitmap;                            /* 位图: bit i = 1 表示优先级 i 非空 */
+    uint32_t dequeue_count;                           /* 出队计数器（用于周期性老化检查） */
 
     coco_coro_t **coro_table;  /* 协程池（ID 映射） */
     uint32_t coro_count;

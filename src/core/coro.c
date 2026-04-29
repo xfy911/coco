@@ -213,10 +213,16 @@ static void apply_aging(coco_sched_t *sched) {
     }
 }
 
-/* 出队：从最高优先级队列头部取出（先执行老化检查） */
+/* 老化检查间隔：每 N 次出队执行一次老化检查 */
+#define AGING_CHECK_INTERVAL 100
+
+/* 出队：从最高优先级队列头部取出（周期性执行老化检查） */
 static coco_coro_t *dequeue_ready(coco_sched_t *sched) {
-    /* 执行老化检查 */
-    apply_aging(sched);
+    /* 周期性执行老化检查 */
+    if (++sched->dequeue_count >= AGING_CHECK_INTERVAL) {
+        sched->dequeue_count = 0;
+        apply_aging(sched);
+    }
 
     /* 使用位图快速定位最高优先级非空队列 */
     if (sched->ready_bitmap == 0) {
