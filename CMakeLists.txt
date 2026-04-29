@@ -129,6 +129,7 @@ if(COCO_BUILD_TESTS)
         test_signal
         test_exit
         test_sleep
+        test_aging_trigger
     )
 
     foreach(test_name ${UNIT_TESTS})
