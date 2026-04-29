@@ -858,14 +858,7 @@ int coco_batch_cancel(coco_batch_io_t *batch) {
 
     batch->submitted = true;  /* 标记为已处理 */
 
-    /* 由于尚未提交，只需释放请求 */
-    for (uint32_t i = 0; i < batch->op_count; i++) {
-        if (batch->ops[i].req) {
-            batch->ops[i].req->cancelled = true;
-            req_free(batch->sched->iouring, batch->ops[i].req);
-        }
-    }
-
+    /* 未提交的批量操作没有分配请求，无需释放 */
     return COCO_OK;
 }
 
@@ -907,8 +900,8 @@ int coco_iouring_submit_batch(coco_sched_t *sched) {
 
     if (ret > 0) {
         iou->submit_count++;
-        /* SQPOLL 模式下，ret > 0 表示实际提交了 SQE */
-        if (!iou->sqpoll_enabled || ret > 0) {
+        /* 非 SQPOLL 模式每次都进入内核 */
+        if (!iou->sqpoll_enabled) {
             iou->syscall_count++;
         }
     }
