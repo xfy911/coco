@@ -53,6 +53,12 @@ set(CORE_SOURCES
     src/sched/sched.c
 )
 
+set(PLATFORM_SOURCES
+    src/platform/coco_thread.c
+    src/platform/coco_mutex.c
+    src/platform/coco_cond.c
+)
+
 set(TIMER_SOURCES
     src/timer/timer_wheel.c
 )
@@ -99,6 +105,7 @@ endif()
 # 创建库
 add_library(coco STATIC
     ${CORE_SOURCES}
+    ${PLATFORM_SOURCES}
     ${TIMER_SOURCES}
     ${CHANNEL_SOURCES}
     ${IO_SOURCES}
@@ -153,6 +160,7 @@ if(COCO_BUILD_TESTS)
         test_netpoller_mt
         test_context_api
         test_context_coro
+        test_platform_abstraction
     )
 
     foreach(test_name ${UNIT_TESTS})
