@@ -121,6 +121,8 @@ if(COCO_BUILD_TESTS)
         test_batch_io
         test_io_options
         test_syscall_count
+        test_poll_macos
+        test_event_loop
     )
 
     foreach(test_name ${UNIT_TESTS})
