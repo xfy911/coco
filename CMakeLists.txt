@@ -127,6 +127,7 @@ if(COCO_BUILD_TESTS)
         test_lifecycle
         test_priority
         test_signal
+        test_exit
     )
 
     foreach(test_name ${UNIT_TESTS})
