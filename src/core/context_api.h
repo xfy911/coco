@@ -1,7 +1,7 @@
 /**
- * context_api.h - Context API (Phase 2, US-009)
+ * context_api.h - Context API (Phase 2, US-009, US-014)
  *
- * Go-style context 模式，支持取消传播和超时控制。
+ * Go-style context 模式，支持取消传播、超时控制和 value 传播。
  */
 
 #ifndef CONTEXT_API_H
@@ -11,6 +11,17 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <stdatomic.h>
+
+/* Value 析构函数类型 */
+typedef void (*coco_value_destructor_t)(void *value);
+
+/* Context value 节点 */
+typedef struct coco_context_value {
+    const char *key;
+    void *value;
+    coco_value_destructor_t destructor;
+    struct coco_context_value *next;
+} coco_context_value_t;
 
 /* Context 结构 */
 typedef struct coco_context {
@@ -39,6 +50,9 @@ typedef struct coco_context {
     /* 取消回调 */
     void (*cancel_cb)(struct coco_context *ctx, void *data);
     void *cancel_cb_data;
+
+    /* Value 存储 (US-014) */
+    coco_context_value_t *values;
 } coco_context_t;
 
 /* Context 创建选项 */
@@ -82,5 +96,30 @@ coco_context_t *coco_context_with_timeout(coco_context_t *parent, int64_t timeou
 coco_context_t *coco_context_with_cancel(coco_context_t *parent);
 coco_context_t *coco_context_background(void);
 coco_context_t *coco_context_todo(void);
+
+/* Value API (US-014) */
+
+/**
+ * @brief 创建带 value 的 context
+ * @param parent 父 context
+ * @param key 键名
+ * @param value 值
+ * @param destructor 析构函数（可为 NULL）
+ * @return 新 context，或 NULL 失败
+ */
+coco_context_t *coco_context_with_value(coco_context_t *parent,
+                                         const char *key,
+                                         void *value,
+                                         coco_value_destructor_t destructor);
+
+/**
+ * @brief 获取 context 中的 value
+ * @param ctx context 指针
+ * @param key 键名
+ * @return 值，或 NULL 未找到
+ *
+ * 沿 context 树向上查找，直到找到匹配的 key。
+ */
+void *coco_context_value(coco_context_t *ctx, const char *key);
 
 #endif /* CONTEXT_API_H */

@@ -167,6 +167,7 @@ if(COCO_BUILD_TESTS)
         test_sched_stats
         test_coco_go
         test_sched_hooks
+        test_context_value
     )
 
     foreach(test_name ${UNIT_TESTS})

@@ -1,5 +1,5 @@
 /**
- * context_api.c - Context API 实现 (Phase 2, US-009)
+ * context_api.c - Context API 实现 (Phase 2, US-009, US-014)
  *
  * Go-style context 模式实现。
  */
@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* 前向声明 */
+static void free_values(coco_context_t *ctx);
 
 /* 获取当前时间（纳秒） */
 static int64_t get_time_ns(void) {
@@ -122,6 +125,9 @@ void coco_context_unref(coco_context_t *ctx) {
         if (ctx->error) {
             free(ctx->error);
         }
+
+        /* 释放 values (US-014) */
+        free_values(ctx);
 
         free(ctx);
     }
@@ -363,4 +369,86 @@ coco_context_t *coco_context_todo(void) {
     /* TODO context 是一个永远不会完成的 context */
     pthread_once(&todo_once, init_todo);
     return coco_context_ref(todo_ctx);
+}
+
+/* === Value API (US-014) === */
+
+/**
+ * coco_context_with_value - 创建带 value 的 context
+ */
+coco_context_t *coco_context_with_value(coco_context_t *parent,
+                                         const char *key,
+                                         void *value,
+                                         coco_value_destructor_t destructor) {
+    if (!key) {
+        return NULL;
+    }
+
+    coco_context_opts_t opts = {
+        .parent = parent,
+        .timeout_ms = 0
+    };
+    coco_context_t *ctx = coco_context_create(&opts);
+    if (!ctx) {
+        return NULL;
+    }
+
+    /* 创建 value 节点 */
+    coco_context_value_t *vnode = malloc(sizeof(coco_context_value_t));
+    if (!vnode) {
+        coco_context_unref(ctx);
+        return NULL;
+    }
+
+    vnode->key = key;
+    vnode->value = value;
+    vnode->destructor = destructor;
+    vnode->next = NULL;
+
+    ctx->values = vnode;
+
+    return ctx;
+}
+
+/**
+ * coco_context_value - 获取 context 中的 value
+ */
+void *coco_context_value(coco_context_t *ctx, const char *key) {
+    if (!ctx || !key) {
+        return NULL;
+    }
+
+    /* 在当前 context 中查找 */
+    coco_context_value_t *vnode = ctx->values;
+    while (vnode) {
+        if (strcmp(vnode->key, key) == 0) {
+            return vnode->value;
+        }
+        vnode = vnode->next;
+    }
+
+    /* 在父 context 中查找 */
+    if (ctx->parent) {
+        return coco_context_value(ctx->parent, key);
+    }
+
+    return NULL;
+}
+
+/* 释放 value 节点 */
+static void free_values(coco_context_t *ctx) {
+    if (!ctx) {
+        return;
+    }
+
+    coco_context_value_t *vnode = ctx->values;
+    while (vnode) {
+        coco_context_value_t *next = vnode->next;
+        if (vnode->destructor && vnode->value) {
+            vnode->destructor(vnode->value);
+        }
+        free(vnode);
+        vnode = next;
+    }
+    ctx->values = NULL;
 }
