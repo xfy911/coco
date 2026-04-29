@@ -118,6 +118,7 @@ if(COCO_BUILD_TESTS)
         test_fd_table
         test_iouring
         test_io_backend
+        test_batch_io
     )
 
     foreach(test_name ${UNIT_TESTS})

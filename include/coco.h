@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <sys/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -136,6 +137,92 @@ int coco_sched_set_io_backend(coco_sched_t *sched, coco_io_backend_t backend);
  * @return Current backend type
  */
 coco_io_backend_t coco_sched_get_io_backend(coco_sched_t *sched);
+
+/** @} */
+
+/* === Batch I/O API === */
+/** @defgroup BatchIO Batch I/O API
+ *  @brief Batch I/O operations for reduced syscall overhead
+ *  @{
+ */
+
+/**
+ * @brief Batch I/O context handle
+ */
+typedef struct coco_batch_io coco_batch_io_t;
+
+/**
+ * @brief Batch operation type
+ */
+typedef enum coco_batch_op {
+    COCO_BATCH_READ,    /**< Batch read operation */
+    COCO_BATCH_WRITE    /**< Batch write operation */
+} coco_batch_op_t;
+
+/**
+ * @brief Batch operation result
+ */
+typedef struct coco_batch_result {
+    int fd;             /**< File descriptor */
+    ssize_t result;     /**< Bytes transferred or error code */
+} coco_batch_result_t;
+
+/**
+ * @brief Begin a batch I/O context
+ * @param sched Scheduler pointer
+ * @return Batch context, or NULL on failure
+ *
+ * Creates a batch context for accumulating I/O operations.
+ * Operations are not submitted until coco_batch_submit() is called.
+ */
+coco_batch_io_t *coco_batch_begin(coco_sched_t *sched);
+
+/**
+ * @brief Add a read operation to batch
+ * @param batch Batch context
+ * @param fd File descriptor
+ * @param buf Buffer to read into
+ * @param count Maximum bytes to read
+ * @return COCO_OK on success, negative error code on failure
+ */
+int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count);
+
+/**
+ * @brief Add a write operation to batch
+ * @param batch Batch context
+ * @param fd File descriptor
+ * @param buf Buffer to write from
+ * @param count Bytes to write
+ * @return COCO_OK on success, negative error code on failure
+ */
+int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count);
+
+/**
+ * @brief Submit batch I/O and wait for completion
+ * @param batch Batch context
+ * @param results Result array (optional, can be NULL)
+ * @param max_results Maximum results to store
+ * @return Number of completed operations, or negative error code
+ *
+ * Submits all accumulated operations and blocks until completion.
+ * After this call, the batch context is automatically ended.
+ */
+int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results);
+
+/**
+ * @brief Cancel a batch I/O
+ * @param batch Batch context
+ * @return COCO_OK on success, negative error code on failure
+ */
+int coco_batch_cancel(coco_batch_io_t *batch);
+
+/**
+ * @brief End a batch context without submitting
+ * @param batch Batch context
+ *
+ * Discards all accumulated operations and frees the context.
+ */
+void coco_batch_end(coco_batch_io_t *batch);
 
 /** @} */
 

@@ -417,3 +417,34 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
 
     return COCO_ERROR;
 }
+
+/* === 批量 I/O API (epoll 不支持) === */
+
+coco_batch_io_t *coco_batch_begin(coco_sched_t *sched) {
+    (void)sched;
+    return NULL;  /* epoll 不支持批量 I/O */
+}
+
+int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count) {
+    (void)batch; (void)fd; (void)buf; (void)count;
+    return COCO_ERROR;
+}
+
+int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count) {
+    (void)batch; (void)fd; (void)buf; (void)count;
+    return COCO_ERROR;
+}
+
+int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results) {
+    (void)batch; (void)results; (void)max_results;
+    return COCO_ERROR;
+}
+
+int coco_batch_cancel(coco_batch_io_t *batch) {
+    (void)batch;
+    return COCO_ERROR;
+}
+
+void coco_batch_end(coco_batch_io_t *batch) {
+    (void)batch;
+}

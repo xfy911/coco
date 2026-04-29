@@ -124,6 +124,9 @@ typedef struct coco_iouring coco_iouring_t;
 /* io_uring 请求（前置声明） */
 typedef struct iouring_req iouring_req_t;
 
+/* 批量 I/O 上下文（前置声明） */
+typedef struct coco_batch_io coco_batch_io_t;
+
 /* 调度器结构 */
 struct coco_sched {
     coco_coro_t *current;      /* 当前运行协程 */

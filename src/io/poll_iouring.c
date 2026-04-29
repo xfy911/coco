@@ -561,6 +561,269 @@ int coco_file_close(int fd) {
 
 /* === 批量 I/O API === */
 
+/* 批量 I/O 操作项 */
+typedef struct coco_batch_op_item {
+    coco_batch_op_t op;     /* 操作类型 */
+    int fd;                 /* 文件描述符 */
+    void *buf;              /* 缓冲区 */
+    size_t count;           /* 字节数 */
+    ssize_t result;         /* 结果 */
+    iouring_req_t *req;     /* 关联请求 */
+} coco_batch_op_item_t;
+
+/* 批量 I/O 上下文结构 */
+struct coco_batch_io {
+    coco_sched_t *sched;            /* 调度器 */
+    coco_coro_t *coro;              /* 关联协程 */
+    coco_batch_op_item_t ops[64];   /* 操作数组 */
+    uint32_t op_count;              /* 操作数量 */
+    bool submitted;                 /* 是否已提交 */
+};
+
+/* 批量 I/O 上下文池 */
+static coco_batch_io_t g_batch_pool[16];
+static int g_batch_pool_used = 0;
+
+/**
+ * coco_batch_begin - 开始批量 I/O 上下文
+ */
+coco_batch_io_t *coco_batch_begin(coco_sched_t *sched) {
+    if (!sched || !sched->iouring) {
+        return NULL;  /* 仅 io_uring 支持 */
+    }
+
+    coco_batch_io_t *batch = NULL;
+
+    /* 从池中分配 */
+    for (int i = 0; i < 16; i++) {
+        if (!(g_batch_pool_used & (1 << i))) {
+            g_batch_pool_used |= (1 << i);
+            batch = &g_batch_pool[i];
+            memset(batch, 0, sizeof(coco_batch_io_t));
+            break;
+        }
+    }
+
+    if (!batch) {
+        batch = calloc(1, sizeof(coco_batch_io_t));
+        if (!batch) return NULL;
+    }
+
+    batch->sched = sched;
+    batch->coro = g_current_coro;
+    batch->op_count = 0;
+    batch->submitted = false;
+
+    return batch;
+}
+
+/**
+ * coco_batch_add_read - 添加读操作到批量上下文
+ */
+int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count) {
+    if (!batch || batch->submitted || fd < 0 || !buf || count == 0) {
+        return COCO_ERROR;
+    }
+
+    if (batch->op_count >= 64) {
+        return COCO_ERROR;  /* 已满 */
+    }
+
+    coco_batch_op_item_t *op = &batch->ops[batch->op_count++];
+    op->op = COCO_BATCH_READ;
+    op->fd = fd;
+    op->buf = buf;
+    op->count = count;
+    op->result = 0;
+    op->req = NULL;
+
+    return COCO_OK;
+}
+
+/**
+ * coco_batch_add_write - 添加写操作到批量上下文
+ */
+int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count) {
+    if (!batch || batch->submitted || fd < 0 || !buf || count == 0) {
+        return COCO_ERROR;
+    }
+
+    if (batch->op_count >= 64) {
+        return COCO_ERROR;  /* 已满 */
+    }
+
+    coco_batch_op_item_t *op = &batch->ops[batch->op_count++];
+    op->op = COCO_BATCH_WRITE;
+    op->fd = fd;
+    op->buf = (void *)buf;  /* 去掉 const */
+    op->count = count;
+    op->result = 0;
+    op->req = NULL;
+
+    return COCO_OK;
+}
+
+/**
+ * coco_batch_submit - 提交批量 I/O 并等待完成
+ */
+int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results) {
+    if (!batch || batch->submitted || batch->op_count == 0) {
+        return COCO_ERROR;
+    }
+
+    coco_sched_t *sched = batch->sched;
+    coco_iouring_t *iou = sched->iouring;
+    coco_coro_t *coro = batch->coro;
+
+    batch->submitted = true;
+
+    /* 为每个操作准备 SQE */
+    for (uint32_t i = 0; i < batch->op_count; i++) {
+        coco_batch_op_item_t *op = &batch->ops[i];
+
+        iouring_req_t *req = req_alloc(iou);
+        if (!req) {
+            /* 回滚已分配的请求 */
+            for (uint32_t j = 0; j < i; j++) {
+                if (batch->ops[j].req) {
+                    req_free(iou, batch->ops[j].req);
+                }
+            }
+            return COCO_ERROR;
+        }
+
+        req->type = (op->op == COCO_BATCH_READ) ? IOURING_REQ_READ : IOURING_REQ_WRITE;
+        req->coro = coro;
+        req->fd = op->fd;
+        req->buf = op->buf;
+        req->count = op->count;
+        req->result = 0;
+        op->req = req;
+
+        struct io_uring_sqe *sqe = io_uring_get_sqe(&iou->ring);
+        if (!sqe) {
+            req_free(iou, req);
+            op->req = NULL;
+            /* 回滚 */
+            for (uint32_t j = 0; j < i; j++) {
+                if (batch->ops[j].req) {
+                    req_free(iou, batch->ops[j].req);
+                }
+            }
+            return COCO_ERROR;
+        }
+
+        if (op->op == COCO_BATCH_READ) {
+            io_uring_prep_read(sqe, op->fd, op->buf, op->count, 0);
+        } else {
+            io_uring_prep_write(sqe, op->fd, op->buf, op->count, 0);
+        }
+        io_uring_sqe_set_data(sqe, req);
+    }
+
+    /* 设置协程为等待状态 */
+    coro->state = COCO_STATE_WAITING;
+
+    /* 提交所有 SQE */
+    int submitted = io_uring_submit(&iou->ring);
+    if (submitted < 0) {
+        return COCO_ERROR;
+    }
+
+    iou->submit_count++;
+    iou->syscall_count++;
+
+    /* 等待所有操作完成 */
+    uint32_t completed = 0;
+    while (completed < batch->op_count) {
+        struct io_uring_cqe *cqe = NULL;
+        int ret = io_uring_wait_cqe(&iou->ring, &cqe);
+
+        if (ret < 0) {
+            if (ret == -EINTR) continue;
+            return COCO_ERROR;
+        }
+
+        iouring_req_t *req = (iouring_req_t *)io_uring_cqe_get_data(cqe);
+        if (req) {
+            req->result = cqe->res;
+
+            /* 找到对应的操作项并保存结果 */
+            for (uint32_t i = 0; i < batch->op_count; i++) {
+                if (batch->ops[i].req == req) {
+                    batch->ops[i].result = cqe->res;
+                    break;
+                }
+            }
+
+            req_free(iou, req);
+            completed++;
+        }
+
+        io_uring_cqe_seen(&iou->ring, cqe);
+    }
+
+    /* 填充结果数组 */
+    if (results && max_results > 0) {
+        size_t n = (max_results < batch->op_count) ? max_results : batch->op_count;
+        for (size_t i = 0; i < n; i++) {
+            results[i].fd = batch->ops[i].fd;
+            results[i].result = batch->ops[i].result;
+        }
+    }
+
+    /* 唤醒协程 */
+    coro->state = COCO_STATE_READY;
+
+    return (int)completed;
+}
+
+/**
+ * coco_batch_cancel - 取消批量 I/O
+ */
+int coco_batch_cancel(coco_batch_io_t *batch) {
+    if (!batch || batch->submitted) {
+        return COCO_ERROR;
+    }
+
+    batch->submitted = true;  /* 标记为已处理 */
+
+    /* 由于尚未提交，只需释放请求 */
+    for (uint32_t i = 0; i < batch->op_count; i++) {
+        if (batch->ops[i].req) {
+            batch->ops[i].req->cancelled = true;
+            req_free(batch->sched->iouring, batch->ops[i].req);
+        }
+    }
+
+    return COCO_OK;
+}
+
+/**
+ * coco_batch_end - 结束批量上下文
+ */
+void coco_batch_end(coco_batch_io_t *batch) {
+    if (!batch) return;
+
+    /* 如果未提交，取消所有操作 */
+    if (!batch->submitted) {
+        coco_batch_cancel(batch);
+    }
+
+    /* 归还到池 */
+    for (int i = 0; i < 16; i++) {
+        if (batch == &g_batch_pool[i]) {
+            g_batch_pool_used &= ~(1 << i);
+            return;
+        }
+    }
+
+    /* 不在池中，释放堆内存 */
+    free(batch);
+}
+
+/* === 批量 I/O API === */
+
 /**
  * coco_iouring_submit_batch - 批量提交 I/O 请求
  */
