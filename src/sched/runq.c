@@ -1,0 +1,146 @@
+/**
+ * runq.c - 本地运行队列实现 (Phase 1)
+ *
+ * Per-P 本地队列，支持工作窃取。
+ *
+ * 锁顺序: 必须按此顺序获取锁以防止死锁
+ * 1. global_runq_lock (如果需要)
+ * 2. local_runq_lock (如果需要)
+ *
+ * 永远不要在持有 local_runq_lock 时获取 global_runq_lock
+ */
+
+#include "runq.h"
+#include <string.h>
+
+/* 本地队列入队 */
+int runq_put(coco_processor_t *p, coco_coro_t *g) {
+    if (!p || !g) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&p->local_runq_lock);
+
+    /* 检查是否溢出 */
+    if (p->local_runq_size >= LOCAL_RUNQ_MAX) {
+        pthread_mutex_unlock(&p->local_runq_lock);
+        /* 溢出到全局队列 (先释放 local 锁，避免锁嵌套) */
+        return runq_put_global(g);
+    }
+
+    /* 添加到队列尾部 */
+    g->next = NULL;
+    g->prev = p->local_runq_tail;
+
+    if (p->local_runq_tail) {
+        p->local_runq_tail->next = g;
+    } else {
+        p->local_runq_head = g;
+    }
+    p->local_runq_tail = g;
+    p->local_runq_size++;
+
+    pthread_mutex_unlock(&p->local_runq_lock);
+    return 0;
+}
+
+/* 本地队列出队 */
+coco_coro_t *runq_get(coco_processor_t *p) {
+    if (!p) {
+        return NULL;
+    }
+
+    pthread_mutex_lock(&p->local_runq_lock);
+
+    if (!p->local_runq_head) {
+        pthread_mutex_unlock(&p->local_runq_lock);
+        return NULL;
+    }
+
+    coco_coro_t *g = p->local_runq_head;
+    p->local_runq_head = g->next;
+
+    if (p->local_runq_head) {
+        p->local_runq_head->prev = NULL;
+    } else {
+        p->local_runq_tail = NULL;
+    }
+
+    g->next = NULL;
+    g->prev = NULL;
+    p->local_runq_size--;
+
+    pthread_mutex_unlock(&p->local_runq_lock);
+    return g;
+}
+
+/* 工作窃取 - 从目标 P 偷取一半协程 */
+coco_coro_t *runq_steal(coco_processor_t *target) {
+    if (!target) {
+        return NULL;
+    }
+
+    /* 使用 trylock 减少阻塞 */
+    if (pthread_mutex_trylock(&target->local_runq_lock) != 0) {
+        return NULL;  /* 锁竞争，跳过这个 P */
+    }
+
+    if (target->local_runq_size == 0) {
+        pthread_mutex_unlock(&target->local_runq_lock);
+        return NULL;
+    }
+
+    /* 偷取一半 */
+    uint32_t steal = target->local_runq_size / 2;
+    if (steal == 0) steal = 1;
+
+    coco_coro_t *batch = NULL;
+    uint32_t count = 0;
+
+    /* 从尾部偷取 */
+    for (uint32_t i = 0; i < steal && target->local_runq_tail; i++) {
+        coco_coro_t *g = target->local_runq_tail;
+        target->local_runq_tail = g->prev;
+
+        if (target->local_runq_tail) {
+            target->local_runq_tail->next = NULL;
+        } else {
+            target->local_runq_head = NULL;
+        }
+
+        /* 添加到 batch 链表头部 */
+        g->prev = NULL;
+        g->next = batch;
+        batch = g;
+
+        target->local_runq_size--;
+        count++;
+    }
+
+    pthread_mutex_unlock(&target->local_runq_lock);
+
+    return batch;
+}
+
+/* 溢出到全局队列 */
+int runq_put_global(coco_coro_t *g) {
+    return coco_global_runq_put(g);
+}
+
+/* 查询队列大小 */
+uint32_t runq_size(coco_processor_t *p) {
+    if (!p) {
+        return 0;
+    }
+
+    pthread_mutex_lock(&p->local_runq_lock);
+    uint32_t size = p->local_runq_size;
+    pthread_mutex_unlock(&p->local_runq_lock);
+
+    return size;
+}
+
+/* 查询队列是否为空 */
+bool runq_empty(coco_processor_t *p) {
+    return runq_size(p) == 0;
+}
