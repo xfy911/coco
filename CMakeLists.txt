@@ -46,6 +46,7 @@ set(CORE_SOURCES
     src/core/stack_pool_legacy.c
     src/core/stack_pool_mt.c
     src/core/cancel.c
+    src/core/coro_go.c
     src/sched/locked_queue.c
     src/sched/safepoint.c
     src/sched/global_sched.c
@@ -163,6 +164,7 @@ if(COCO_BUILD_TESTS)
         test_context_coro
         test_platform_abstraction
         test_sched_stats
+        test_coco_go
     )
 
     foreach(test_name ${UNIT_TESTS})
