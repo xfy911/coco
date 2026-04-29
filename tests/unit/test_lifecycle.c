@@ -61,7 +61,20 @@ int main(void) {
     }
     
     coco_sched_destroy(sched);
-    
+
+    printf("  test_sched_get_current: ");
+    sched = coco_sched_create();
+    if (!sched) { printf("FAIL - no sched\n"); return 1; }
+
+    coco_sched_t *current = coco_sched_get_current();
+    if (current == sched) {
+        printf("PASS\n");
+    } else {
+        printf("FAIL\n");
+    }
+
+    coco_sched_destroy(sched);
+
     printf("\nResults: All passed\n");
     return 0;
 }

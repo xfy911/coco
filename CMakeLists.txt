@@ -128,6 +128,7 @@ if(COCO_BUILD_TESTS)
         test_priority
         test_signal
         test_exit
+        test_sleep
     )
 
     foreach(test_name ${UNIT_TESTS})
