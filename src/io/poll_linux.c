@@ -158,12 +158,21 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
         return coco_poll_register_iouring(sched, fd, coro, events);
     }
 
-    /* epoll 注册 */
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        return COCO_ERROR;
+    /* epoll 注册 - 使用 O_NONBLOCK 缓存 */
+    if (fd < 32 && coro && (coro->nonblock_fds_set & (1U << fd))) {
+        /* 已设置，跳过 fcntl */
+    } else {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0) {
+            return COCO_ERROR;
+        }
+        if (!(flags & O_NONBLOCK)) {
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+        if (fd < 32 && coro) {
+            coro->nonblock_fds_set |= (1U << fd);
+        }
     }
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     struct epoll_event ev;
     ev.events = events | EPOLLONESHOT | EPOLLET;
@@ -191,6 +200,12 @@ void coco_poll_unregister(coco_sched_t *sched, int fd) {
     if (sched->poll_backend == COCO_POLL_IOURING) {
         coco_poll_unregister_iouring(sched, fd);
         return;
+    }
+
+    /* 清除 O_NONBLOCK 缓存 */
+    coco_coro_t *coro = g_current_coro;
+    if (fd < 32 && coro) {
+        coro->nonblock_fds_set &= ~(1U << fd);
     }
 
     epoll_ctl(sched->poll_fd, EPOLL_CTL_DEL, fd, NULL);

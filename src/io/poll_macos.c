@@ -117,12 +117,21 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
         return COCO_ERROR;
     }
 
-    /* 设置 fd 为非阻塞 */
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        return COCO_ERROR;
+    /* 设置 fd 为非阻塞 (使用缓存) */
+    if (fd < 32 && coro && (coro->nonblock_fds_set & (1U << fd))) {
+        /* 已设置，跳过 fcntl */
+    } else {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0) {
+            return COCO_ERROR;
+        }
+        if (!(flags & O_NONBLOCK)) {
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+        if (fd < 32 && coro) {
+            coro->nonblock_fds_set |= (1U << fd);
+        }
     }
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     /* 创建 kevent 结构 */
     struct kevent kev;
@@ -154,6 +163,12 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
 void coco_poll_unregister(coco_sched_t *sched, int fd) {
     if (!sched || sched->poll_fd < 0 || fd < 0) {
         return;
+    }
+
+    /* 清除 O_NONBLOCK 缓存 */
+    coco_coro_t *coro = g_current_coro;
+    if (fd < 32 && coro) {
+        coro->nonblock_fds_set &= ~(1U << fd);
     }
 
     struct kevent kev;

@@ -70,6 +70,9 @@ struct coco_coro {
         bool in_use;               /* 是否在等待队列中 */
         bool freed_by_destroy;     /* destroy 已释放标志 */
     } wait_node;
+
+    /* O_NONBLOCK 缓存位图 (FD 0-31) */
+    uint32_t nonblock_fds_set;
 };
 
 /* 时间轮结构（前置声明） */
