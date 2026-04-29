@@ -119,6 +119,7 @@ if(COCO_BUILD_TESTS)
         test_iouring
         test_io_backend
         test_batch_io
+        test_io_options
     )
 
     foreach(test_name ${UNIT_TESTS})

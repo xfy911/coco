@@ -140,6 +140,43 @@ coco_io_backend_t coco_sched_get_io_backend(coco_sched_t *sched);
 
 /** @} */
 
+/* === I/O Configuration API === */
+/** @defgroup IOConfig I/O Configuration API
+ *  @brief Configuration options for I/O backends
+ *  @{
+ */
+
+/**
+ * @brief I/O configuration options
+ */
+typedef struct coco_io_options {
+    uint32_t queue_depth;       /**< Queue depth (default 256) */
+    bool sqpoll_enabled;        /**< Enable SQPOLL (default true on Linux 5.11+) */
+    int sqpoll_cpu;             /**< SQPOLL CPU affinity (-1 = no binding) */
+    uint32_t sqpoll_idle_ms;    /**< SQPOLL idle timeout in ms (default 1000) */
+} coco_io_options_t;
+
+/**
+ * @brief Set I/O configuration options
+ * @param sched Scheduler pointer
+ * @param options Configuration options
+ * @return COCO_OK on success, COCO_ERROR on failure
+ *
+ * Must be called before coco_sched_run(). Options are applied
+ * during I/O backend initialization.
+ */
+int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options);
+
+/**
+ * @brief Get current I/O configuration
+ * @param sched Scheduler pointer
+ * @param options Output configuration
+ * @return COCO_OK on success, COCO_ERROR on failure
+ */
+int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options);
+
+/** @} */
+
 /* === Batch I/O API === */
 /** @defgroup BatchIO Batch I/O API
  *  @brief Batch I/O operations for reduced syscall overhead

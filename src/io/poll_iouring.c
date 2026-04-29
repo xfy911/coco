@@ -21,6 +21,52 @@
 #define IOURING_ENTRIES     256   /* 默认队列深度 */
 #define IOURING_SQPOLL_IDLE 1000  /* SQPOLL 空闲超时 (ms) */
 
+/* 默认 I/O 配置 */
+static const coco_io_options_t g_default_io_options = {
+    .queue_depth = IOURING_ENTRIES,
+    .sqpoll_enabled = true,
+    .sqpoll_cpu = -1,
+    .sqpoll_idle_ms = IOURING_SQPOLL_IDLE
+};
+
+/* === I/O 配置 API === */
+
+/**
+ * coco_sched_set_io_options - 设置 I/O 配置
+ */
+int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options) {
+    if (!sched || !options) {
+        return COCO_ERROR;
+    }
+
+    /* 必须在调度器初始化之前调用 */
+    if (sched->poll_fd >= 0 || sched->iouring) {
+        return COCO_ERROR;  /* 已初始化，无法更改 */
+    }
+
+    sched->io_options = *options;
+    sched->io_options_set = true;
+
+    return COCO_OK;
+}
+
+/**
+ * coco_sched_get_io_options - 获取当前 I/O 配置
+ */
+int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
+    if (!sched || !options) {
+        return COCO_ERROR;
+    }
+
+    if (sched->io_options_set) {
+        *options = sched->io_options;
+    } else {
+        *options = g_default_io_options;
+    }
+
+    return COCO_OK;
+}
+
 /* io_uring 请求类型 */
 typedef enum {
     IOURING_REQ_POLL,     /* 轮询请求 (网络 I/O) */
@@ -123,7 +169,15 @@ int coco_poll_init_iouring(coco_sched_t *sched) {
         return COCO_ERROR;
     }
 
-    iou->entries = IOURING_ENTRIES;
+    /* 获取配置选项 */
+    coco_io_options_t opts;
+    if (sched->io_options_set) {
+        opts = sched->io_options;
+    } else {
+        opts = g_default_io_options;
+    }
+
+    iou->entries = opts.queue_depth > 0 ? opts.queue_depth : IOURING_ENTRIES;
 
     /* 初始化请求池 */
     for (int i = 0; i < 256; i++) {
@@ -132,10 +186,17 @@ int coco_poll_init_iouring(coco_sched_t *sched) {
     }
 
     /* 尝试启用 SQPOLL */
-    if (sqpoll_supported()) {
+    bool try_sqpoll = opts.sqpoll_enabled && sqpoll_supported();
+    if (try_sqpoll) {
         memset(&iou->params, 0, sizeof(iou->params));
         iou->params.flags = IORING_SETUP_SQPOLL;
-        iou->params.sq_thread_idle = IOURING_SQPOLL_IDLE;
+        iou->params.sq_thread_idle = opts.sqpoll_idle_ms > 0 ? opts.sqpoll_idle_ms : IOURING_SQPOLL_IDLE;
+
+        /* CPU 绑定 */
+        if (opts.sqpoll_cpu >= 0) {
+            iou->params.flags |= IORING_SETUP_SQ_AFF;
+            iou->params.sq_thread_cpu = (uint32_t)opts.sqpoll_cpu;
+        }
 
         if (io_uring_queue_init_params(iou->entries, &iou->ring, &iou->params) == 0) {
             iou->sqpoll_enabled = true;

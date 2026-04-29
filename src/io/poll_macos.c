@@ -428,3 +428,39 @@ int coco_batch_cancel(coco_batch_io_t *batch) {
 void coco_batch_end(coco_batch_io_t *batch) {
     (void)batch;
 }
+
+/* === I/O 配置 API === */
+
+int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options) {
+    if (!sched || !options) {
+        return COCO_ERROR;
+    }
+
+    /* 必须在调度器初始化之前调用 */
+    if (sched->poll_fd >= 0) {
+        return COCO_ERROR;
+    }
+
+    sched->io_options = *options;
+    sched->io_options_set = true;
+
+    return COCO_OK;
+}
+
+int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
+    if (!sched || !options) {
+        return COCO_ERROR;
+    }
+
+    /* kqueue 后端返回默认配置 */
+    options->queue_depth = 256;
+    options->sqpoll_enabled = false;
+    options->sqpoll_cpu = -1;
+    options->sqpoll_idle_ms = 0;
+
+    if (sched->io_options_set) {
+        *options = sched->io_options;
+    }
+
+    return COCO_OK;
+}

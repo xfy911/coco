@@ -161,6 +161,8 @@ struct coco_sched {
 
     /* I/O 后端配置 */
     coco_poll_config_t poll_config;  /* 后端强制选择配置 */
+    coco_io_options_t io_options;    /* I/O 配置选项 */
+    bool io_options_set;             /* 是否设置了自定义配置 */
 
     /* 老化配置 */
     uint64_t aging_threshold_ms;  /* 老化阈值（等待多久后提升优先级） */
