@@ -340,9 +340,14 @@ int coco_poll_wait_iouring(coco_sched_t *sched, int timeout_ms) {
     }
 
     /* 提交待处理请求 */
-    io_uring_submit(&iou->ring);
+    int submitted = io_uring_submit(&iou->ring);
     iou->submit_count++;
-    iou->syscall_count++;
+
+    /* SQPOLL 模式下，submitted > 0 表示实际提交了 SQE
+     * 非 SQPOLL 模式下，每次 submit 都进入内核 */
+    if (!iou->sqpoll_enabled || submitted > 0) {
+        iou->syscall_count++;
+    }
 
     /* 等待完成事件 */
     struct io_uring_cqe *cqe = NULL;
@@ -792,7 +797,11 @@ int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size
     }
 
     iou->submit_count++;
-    iou->syscall_count++;
+
+    /* SQPOLL 模式下，submitted > 0 表示实际提交了 SQE */
+    if (!iou->sqpoll_enabled || submitted > 0) {
+        iou->syscall_count++;
+    }
 
     /* 等待所有操作完成 */
     uint32_t completed = 0;
@@ -898,7 +907,10 @@ int coco_iouring_submit_batch(coco_sched_t *sched) {
 
     if (ret > 0) {
         iou->submit_count++;
-        iou->syscall_count++;
+        /* SQPOLL 模式下，ret > 0 表示实际提交了 SQE */
+        if (!iou->sqpoll_enabled || ret > 0) {
+            iou->syscall_count++;
+        }
     }
 
     return ret;

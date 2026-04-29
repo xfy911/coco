@@ -464,3 +464,9 @@ int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
 
     return COCO_OK;
 }
+
+void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
+    (void)sched;
+    if (submit_count) *submit_count = 0;
+    if (syscall_count) *syscall_count = 0;
+}

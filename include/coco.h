@@ -175,6 +175,16 @@ int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *opti
  */
 int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options);
 
+/**
+ * @brief Get io_uring statistics (Linux only)
+ * @param sched Scheduler pointer
+ * @param submit_count Output: number of submit calls
+ * @param syscall_count Output: number of actual syscalls
+ *
+ * On non-Linux platforms, outputs are set to 0.
+ */
+void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count);
+
 /** @} */
 
 /* === Batch I/O API === */
