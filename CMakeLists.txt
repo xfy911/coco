@@ -53,6 +53,7 @@ set(CORE_SOURCES
     src/sched/runq.c
     src/sched/sched.c
     src/sched/sched_stats.c
+    src/sched/sched_hooks.c
 )
 
 set(PLATFORM_SOURCES
@@ -165,6 +166,7 @@ if(COCO_BUILD_TESTS)
         test_platform_abstraction
         test_sched_stats
         test_coco_go
+        test_sched_hooks
     )
 
     foreach(test_name ${UNIT_TESTS})
