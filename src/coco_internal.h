@@ -105,6 +105,10 @@ typedef enum {
     COCO_POLL_IOURING     /* Linux io_uring */
 } coco_poll_backend_t;
 
+/* I/O 配置常量 */
+#define COCO_EPOLL_MAX_EVENTS  256   /* epoll_wait 最大事件数 */
+#define COCO_KQUEUE_MAX_EVENTS 256   /* kevent 最大事件数 */
+
 /* 强制后端选择标志 */
 typedef struct {
     coco_io_backend_t forced_backend;  /* 用户强制选择的后端 */

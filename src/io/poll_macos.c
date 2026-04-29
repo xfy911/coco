@@ -186,8 +186,8 @@ int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
         timeout_ptr = &timeout;
     }
 
-    struct kevent events[64];
-    int n = kevent(sched->poll_fd, NULL, 0, events, 64, timeout_ptr);
+    struct kevent events[COCO_KQUEUE_MAX_EVENTS];
+    int n = kevent(sched->poll_fd, NULL, 0, events, COCO_KQUEUE_MAX_EVENTS, timeout_ptr);
 
     /* 处理就绪事件 */
     for (int i = 0; i < n; i++) {

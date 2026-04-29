@@ -208,8 +208,8 @@ int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
     }
 
     /* epoll 等待 */
-    struct epoll_event events[64];
-    int n = epoll_wait(sched->poll_fd, events, 64, timeout_ms);
+    struct epoll_event events[COCO_EPOLL_MAX_EVENTS];
+    int n = epoll_wait(sched->poll_fd, events, COCO_EPOLL_MAX_EVENTS, timeout_ms);
 
     for (int i = 0; i < n; i++) {
         int fd = events[i].data.fd;
