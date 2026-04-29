@@ -55,6 +55,7 @@ set(TIMER_SOURCES
 
 set(CHANNEL_SOURCES
     src/channel/channel.c
+    src/channel/channel_mt.c
 )
 
 set(IO_SOURCES
@@ -142,6 +143,7 @@ if(COCO_BUILD_TESTS)
         test_global_sched
         test_runq
         test_sched
+        test_channel_mt
     )
 
     foreach(test_name ${UNIT_TESTS})

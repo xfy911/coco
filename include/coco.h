@@ -39,6 +39,7 @@ extern "C" {
 #define COCO_ERROR_CHANNEL_CLOSED -4 /**< Channel is closed */
 #define COCO_ERROR_INVALID     -5    /**< Invalid argument */
 #define COCO_ERROR_CANCELLED   -6    /**< Operation was cancelled */
+#define COCO_ERROR_WOULD_BLOCK -7    /**< Operation would block (non-blocking API) */
 /** @} */
 
 /* === Coroutine States === */
