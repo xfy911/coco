@@ -1,0 +1,256 @@
+/**
+ * global_sched.c - 全局调度器框架实现 (Phase 1)
+ *
+ * M:N 多线程调度架构，参考 Go runtime 设计。
+ */
+
+#include "global_sched.h"
+#include "../core/stack_pool_multi.h"
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/* 全局调度器实例 */
+static coco_global_sched_t *g_global_sched = NULL;
+
+/* 获取 CPU 核心数 */
+static uint32_t get_cpu_count(void) {
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+    return (count > 0) ? (uint32_t)count : 1;
+}
+
+/* 创建处理器 (P) */
+coco_processor_t *coco_processor_create(uint32_t id) {
+    coco_processor_t *p = calloc(1, sizeof(coco_processor_t));
+    if (!p) {
+        return NULL;
+    }
+
+    p->id = id;
+    p->local_runq_head = NULL;
+    p->local_runq_tail = NULL;
+    p->local_runq_size = 0;
+    pthread_mutex_init(&p->local_runq_lock, NULL);
+
+    atomic_init(&p->curcoro, NULL);
+    p->m = NULL;
+
+    /* 创建 Per-P 栈池 */
+    p->stack_pool = stack_pool_multi_create();
+    if (!p->stack_pool) {
+        pthread_mutex_destroy(&p->local_runq_lock);
+        free(p);
+        return NULL;
+    }
+
+    atomic_init(&p->status, P_IDLE);
+    p->next = NULL;
+
+    return p;
+}
+
+/* 销毁处理器 (P) */
+void coco_processor_destroy(coco_processor_t *p) {
+    if (!p) {
+        return;
+    }
+
+    pthread_mutex_destroy(&p->local_runq_lock);
+
+    if (p->stack_pool) {
+        stack_pool_multi_destroy(p->stack_pool);
+    }
+
+    free(p);
+}
+
+/* 创建机器 (M) */
+coco_machine_t *coco_machine_create(uint32_t id) {
+    coco_machine_t *m = calloc(1, sizeof(coco_machine_t));
+    if (!m) {
+        return NULL;
+    }
+
+    m->id = id;
+    m->thread = 0;
+    m->p = NULL;
+    atomic_init(&m->status, M_IDLE);
+    m->next = NULL;
+
+    return m;
+}
+
+/* 销毁机器 (M) */
+void coco_machine_destroy(coco_machine_t *m) {
+    if (m) {
+        free(m);
+    }
+}
+
+/* 全局初始化 */
+int coco_global_init(uint32_t num_procs) {
+    if (g_global_sched != NULL) {
+        return -1;  /* 已初始化 */
+    }
+
+    if (num_procs == 0) {
+        num_procs = get_cpu_count();
+    }
+
+    g_global_sched = calloc(1, sizeof(coco_global_sched_t));
+    if (!g_global_sched) {
+        return -1;
+    }
+
+    /* 初始化处理器数组 */
+    g_global_sched->processors = calloc(num_procs, sizeof(coco_processor_t*));
+    if (!g_global_sched->processors) {
+        free(g_global_sched);
+        g_global_sched = NULL;
+        return -1;
+    }
+
+    g_global_sched->processor_count = num_procs;
+    g_global_sched->processor_mask = num_procs - 1;
+
+    /* 创建处理器 */
+    for (uint32_t i = 0; i < num_procs; i++) {
+        g_global_sched->processors[i] = coco_processor_create(i);
+        if (!g_global_sched->processors[i]) {
+            /* 清理已创建的处理器 */
+            for (uint32_t j = 0; j < i; j++) {
+                coco_processor_destroy(g_global_sched->processors[j]);
+            }
+            free(g_global_sched->processors);
+            free(g_global_sched);
+            g_global_sched = NULL;
+            return -1;
+        }
+    }
+
+    /* 初始化全局队列 */
+    g_global_sched->global_runq_head = NULL;
+    g_global_sched->global_runq_tail = NULL;
+    g_global_sched->global_runq_size = 0;
+    pthread_mutex_init(&g_global_sched->global_runq_lock, NULL);
+
+    /* 初始化空闲列表 */
+    g_global_sched->idle_processors = NULL;
+    pthread_mutex_init(&g_global_sched->idle_lock, NULL);
+
+    g_global_sched->idle_machines = NULL;
+    pthread_cond_init(&g_global_sched->idle_cond, NULL);
+
+    /* 初始化统计 */
+    atomic_init(&g_global_sched->total_coroutines, 0);
+    atomic_init(&g_global_sched->active_coroutines, 0);
+    atomic_init(&g_global_sched->running, false);
+
+    return 0;
+}
+
+/* 全局销毁 */
+void coco_global_destroy(void) {
+    if (!g_global_sched) {
+        return;
+    }
+
+    atomic_store(&g_global_sched->running, false);
+
+    /* 销毁处理器 */
+    for (uint32_t i = 0; i < g_global_sched->processor_count; i++) {
+        coco_processor_destroy(g_global_sched->processors[i]);
+    }
+
+    pthread_mutex_destroy(&g_global_sched->global_runq_lock);
+    pthread_mutex_destroy(&g_global_sched->idle_lock);
+    pthread_cond_destroy(&g_global_sched->idle_cond);
+
+    free(g_global_sched->processors);
+    free(g_global_sched);
+    g_global_sched = NULL;
+}
+
+/* 获取全局调度器 */
+coco_global_sched_t *coco_global_get(void) {
+    return g_global_sched;
+}
+
+/* 全局队列入队 */
+int coco_global_runq_put(struct coco_coro *g) {
+    if (!g_global_sched || !g) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_global_sched->global_runq_lock);
+
+    g->next = NULL;
+    g->prev = g_global_sched->global_runq_tail;
+
+    if (g_global_sched->global_runq_tail) {
+        g_global_sched->global_runq_tail->next = g;
+    } else {
+        g_global_sched->global_runq_head = g;
+    }
+    g_global_sched->global_runq_tail = g;
+    g_global_sched->global_runq_size++;
+
+    pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+    return 0;
+}
+
+/* 全局队列出队 */
+struct coco_coro *coco_global_runq_get(void) {
+    if (!g_global_sched) {
+        return NULL;
+    }
+
+    pthread_mutex_lock(&g_global_sched->global_runq_lock);
+
+    if (!g_global_sched->global_runq_head) {
+        pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+        return NULL;
+    }
+
+    struct coco_coro *g = g_global_sched->global_runq_head;
+    g_global_sched->global_runq_head = g->next;
+
+    if (g_global_sched->global_runq_head) {
+        g_global_sched->global_runq_head->prev = NULL;
+    } else {
+        g_global_sched->global_runq_tail = NULL;
+    }
+
+    g->next = NULL;
+    g->prev = NULL;
+    g_global_sched->global_runq_size--;
+
+    pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+    return g;
+}
+
+/* 全局队列大小 */
+uint64_t coco_global_runq_size(void) {
+    if (!g_global_sched) {
+        return 0;
+    }
+
+    pthread_mutex_lock(&g_global_sched->global_runq_lock);
+    uint64_t size = g_global_sched->global_runq_size;
+    pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+
+    return size;
+}
+
+/* 获取处理器数量 */
+uint32_t coco_processor_count(void) {
+    return g_global_sched ? g_global_sched->processor_count : 0;
+}
+
+/* 获取指定处理器 */
+coco_processor_t *coco_processor_get(uint32_t id) {
+    if (!g_global_sched || id >= g_global_sched->processor_count) {
+        return NULL;
+    }
+    return g_global_sched->processors[id];
+}
