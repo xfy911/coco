@@ -62,6 +62,14 @@ struct coco_coro {
     uint64_t ready_timestamp;      /* 进入就绪队列的时间（用于老化） */
 
     coco_error_cb error_cb;
+
+    /* 嵌入式 Channel 等待节点 */
+    struct {
+        coco_coro_t *next_waiter;  /* 等待队列下一节点 */
+        void *value;               /* 传递的值 */
+        bool in_use;               /* 是否在等待队列中 */
+        bool freed_by_destroy;     /* destroy 已释放标志 */
+    } wait_node;
 };
 
 /* 时间轮结构（前置声明） */
