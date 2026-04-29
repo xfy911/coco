@@ -116,6 +116,7 @@ if(COCO_BUILD_TESTS)
         test_stack_overflow
         test_cancel
         test_fd_table
+        test_iouring
     )
 
     foreach(test_name ${UNIT_TESTS})
