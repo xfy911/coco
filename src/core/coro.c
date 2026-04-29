@@ -527,8 +527,52 @@ size_t coco_get_stack_usage(coco_coro_t *coro) {
 }
 
 void coco_set_priority(coco_coro_t *coro, coco_priority_t priority) {
-    if (coro && priority >= 0 && priority < COCO_PRIORITY_COUNT) {
-        coro->priority = priority;
+    if (!coro || priority < 0 || priority >= COCO_PRIORITY_COUNT) {
+        return;
+    }
+
+    coco_priority_t old_prio = coro->priority;
+    if (old_prio == priority) {
+        return;
+    }
+
+    coro->priority = priority;
+
+    /* 如果协程在就绪队列中，需要重新排队 */
+    if (coro->state == COCO_STATE_READY && g_current_sched) {
+        coco_sched_t *sched = g_current_sched;
+
+        /* 从旧优先级队列中移除 */
+        if (coro->prev) {
+            coro->prev->next = coro->next;
+        } else {
+            sched->ready_heads[old_prio] = coro->next;
+        }
+        if (coro->next) {
+            coro->next->prev = coro->prev;
+        } else {
+            sched->ready_tails[old_prio] = coro->prev;
+        }
+        sched->ready_counts[old_prio]--;
+
+        /* 如果旧队列空了，清除位图 */
+        if (sched->ready_heads[old_prio] == NULL) {
+            sched->ready_bitmap &= ~(1U << old_prio);
+        }
+
+        /* 添加到新优先级队列 */
+        coro->prev = sched->ready_tails[priority];
+        coro->next = NULL;
+        if (sched->ready_tails[priority]) {
+            sched->ready_tails[priority]->next = coro;
+        } else {
+            sched->ready_heads[priority] = coro;
+        }
+        sched->ready_tails[priority] = coro;
+        sched->ready_counts[priority]++;
+
+        /* 设置位图 */
+        sched->ready_bitmap |= (1U << priority);
     }
 }
 

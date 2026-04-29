@@ -123,6 +123,10 @@ if(COCO_BUILD_TESTS)
         test_syscall_count
         test_poll_macos
         test_event_loop
+        test_aging
+        test_lifecycle
+        test_priority
+        test_signal
     )
 
     foreach(test_name ${UNIT_TESTS})
