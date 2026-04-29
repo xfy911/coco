@@ -37,6 +37,7 @@ set(CORE_SOURCES
     src/core/coro.c
     src/core/sched.c
     src/core/context.c
+    src/core/context_api.c
     src/core/stack.c
     src/core/signal.c
     src/core/stack_pool.c
@@ -146,6 +147,7 @@ if(COCO_BUILD_TESTS)
         test_sched
         test_channel_mt
         test_netpoller_mt
+        test_context_api
     )
 
     foreach(test_name ${UNIT_TESTS})
