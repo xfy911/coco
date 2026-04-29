@@ -20,7 +20,14 @@
 #define STACK_SIZE_64K   (64 * 1024)
 #define STACK_SIZE_128K  (128 * 1024)
 
-/* 空闲栈节点 */
+/* 栈池选择性清零模式 */
+typedef enum {
+    STACK_ZERO_NONE = 0,      /* 不清零（最快，需确保协程入口初始化所有状态） */
+    STACK_ZERO_TOP_1K = 1,    /* 仅清零栈顶 1KB（推荐，平衡安全与性能） */
+    STACK_ZERO_FULL = 2       /* 清零全部（最安全，最慢） */
+} stack_zero_mode_t;
+
+/* 空闲栈节点 - 嵌入栈空间 */
 typedef struct stack_node {
     void *stack_top;          /* 栈顶地址 */
     size_t size;              /* 栈大小 */
@@ -33,6 +40,7 @@ typedef struct stack_pool {
     size_t sizes[STACK_POOL_NUM_CLASSES];              /* Size class 大小 */
     uint32_t counts[STACK_POOL_NUM_CLASSES];           /* 每个 class 当前数量 */
     uint32_t limits[STACK_POOL_NUM_CLASSES];           /* 每个 class 上限 */
+    stack_zero_mode_t zero_mode;                        /* 清零模式 */
 } stack_pool_t;
 
 /* API */

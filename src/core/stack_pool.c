@@ -89,6 +89,9 @@ stack_pool_t *stack_pool_create(void) {
         pool->counts[i] = 0;
     }
 
+    /* 默认使用栈顶 1KB 清零模式 */
+    pool->zero_mode = STACK_ZERO_TOP_1K;
+
     return pool;
 }
 
@@ -98,18 +101,34 @@ void stack_pool_destroy(stack_pool_t *pool) {
         return;
     }
 
-    /* 释放所有空闲栈 */
+    /* 释放所有空闲栈（节点嵌入在栈空间中，直接 munmap 即可） */
     for (int i = 0; i < STACK_POOL_NUM_CLASSES; i++) {
         stack_node_t *node = pool->freelists[i];
         while (node) {
             stack_node_t *next = node->next;
             free_stack_mmap(node->stack_top, node->size);
-            free(node);
+            /* 节点嵌入在栈空间中，无需 free */
             node = next;
         }
     }
 
     free(pool);
+}
+
+/* 选择性清零栈 */
+static void zero_stack(void *stack_top, size_t size, stack_zero_mode_t mode) {
+    if (mode == STACK_ZERO_NONE) {
+        return;
+    }
+
+    if (mode == STACK_ZERO_TOP_1K) {
+        /* 仅清零栈顶 1KB（协程入口使用区域） */
+        memset((void*)((uintptr_t)stack_top - 1024), 0, 1024);
+    } else {
+        /* 清零全部 */
+        void *stack_base = (void*)((uintptr_t)stack_top - size);
+        memset(stack_base, 0, size);
+    }
 }
 
 /* 从栈池分配 */
@@ -133,13 +152,11 @@ void *stack_pool_alloc(stack_pool_t *pool, size_t size) {
 
         void *stack_top = node->stack_top;
         size_t actual_size = node->size;
-        free(node);
 
-        /* 清零栈内容（安全） */
-        size_t page_size = get_page_size();
-        size_t usable_size = actual_size;  /* 不含 guard page */
-        void *stack_base = (void*)((uintptr_t)stack_top - usable_size - page_size + page_size);
-        memset(stack_base, 0, usable_size);
+        /* 节点嵌入在栈空间中，无需 free */
+
+        /* 选择性清零栈 */
+        zero_stack(stack_top, actual_size, pool->zero_mode);
 
         return stack_top;
     }
@@ -168,15 +185,17 @@ void stack_pool_free(stack_pool_t *pool, void *stack_top, size_t size) {
         return;
     }
 
-    /* 创建空闲节点并加入链表 */
-    stack_node_t *node = malloc(sizeof(stack_node_t));
-    if (!node) {
-        free_stack_mmap(stack_top, size);
-        return;
-    }
+    /* 将节点嵌入栈空间底部（guard page 之后的位置） */
+    /* 栈布局: [guard page][stack space] */
+    /* stack_top 指向栈空间末尾，stack_base = stack_top - stack_size - page_size */
+    /* 节点放在 stack_base + page_size（即栈空间起始位置） */
+    size_t page_size = get_page_size();
+    size_t actual_size = pool->sizes[class_idx];
+    void *stack_base = (void*)((uintptr_t)stack_top - actual_size - page_size);
+    stack_node_t *node = (stack_node_t*)((uintptr_t)stack_base + page_size);
 
     node->stack_top = stack_top;
-    node->size = pool->sizes[class_idx];  /* 使用 size class 大小 */
+    node->size = actual_size;
     node->next = pool->freelists[class_idx];
     pool->freelists[class_idx] = node;
     pool->counts[class_idx]++;
