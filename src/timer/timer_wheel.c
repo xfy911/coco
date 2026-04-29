@@ -17,6 +17,9 @@
 #define W3_SIZE 64    /* 第3层: 64 slots, 16384ms granularity, range 0-1048575ms */
 #define W4_SIZE 64    /* 第4层: 64 slots, 1048576ms granularity, range 0-67108863ms */
 
+/* 定时器池大小 */
+#define TIMER_POOL_SIZE 1024
+
 /* 时间轮结构 */
 typedef struct coco_timer_wheel {
     coco_timer_t *w1[W1_SIZE];  /* 第1层 */
@@ -30,23 +33,42 @@ typedef struct coco_timer_wheel {
     uint32_t w4_tick;           /* 第4层当前 tick */
 
     uint64_t current_time_ms;   /* 当前时间（毫秒） */
-} coco_timer_wheel_t;
 
-/* 定时器结构 */
-struct coco_timer {
-    uint64_t expire_time_ms;    /* 过期时间（毫秒） */
-    coco_coro_t *coro;          /* 关联协程 */
-    void (*callback)(void*);    /* 回调函数 */
-    void *arg;                  /* 回调参数 */
-    coco_timer_t *next;         /* 链表下一节点 */
-    coco_timer_t *prev;         /* 链表上一节点 (O(1) 取消) */
-    int level;                  /* 所在层级 (1-4) */
-    int slot;                   /* 所在槽位 */
-    bool cancelled;             /* 已取消标志 */
-};
+    /* 定时器池 */
+    coco_timer_t *timer_freelist;              /* 空闲链表 */
+    coco_timer_t timer_pool[TIMER_POOL_SIZE];  /* 预分配缓冲区 */
+} coco_timer_wheel_t;
 
 /* 线程局部时间轮 */
 static _Thread_local coco_timer_wheel_t *g_timer_wheel = NULL;
+
+/* 从池中分配定时器 */
+static coco_timer_t *timer_alloc(coco_timer_wheel_t *tw) {
+    if (tw && tw->timer_freelist) {
+        coco_timer_t *timer = tw->timer_freelist;
+        tw->timer_freelist = timer->next;
+        memset(timer, 0, sizeof(coco_timer_t));
+        return timer;
+    }
+    /* 池耗尽，回退到动态分配 */
+    return calloc(1, sizeof(coco_timer_t));
+}
+
+/* 归还定时器到池 */
+static void timer_free(coco_timer_wheel_t *tw, coco_timer_t *timer) {
+    if (!timer) {
+        return;
+    }
+    if (tw && timer >= &tw->timer_pool[0] && timer <= &tw->timer_pool[TIMER_POOL_SIZE - 1]) {
+        /* 来自池，归还到空闲链表 */
+        memset(timer, 0, sizeof(coco_timer_t));
+        timer->next = tw->timer_freelist;
+        tw->timer_freelist = timer;
+    } else {
+        /* 动态分配，直接释放 */
+        free(timer);
+    }
+}
 
 /* 获取当前时间（毫秒）- 内部 API */
 uint64_t get_current_time_ms_internal(void) {
@@ -68,6 +90,13 @@ coco_timer_wheel_t *coco_timer_wheel_create(void) {
     }
 
     tw->current_time_ms = get_current_time_ms();
+
+    /* 初始化定时器池空闲链表 */
+    for (uint32_t i = 0; i < TIMER_POOL_SIZE; i++) {
+        tw->timer_pool[i].next = tw->timer_freelist;
+        tw->timer_freelist = &tw->timer_pool[i];
+    }
+
     g_timer_wheel = tw;
 
     return tw;
@@ -79,12 +108,12 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw) {
         return;
     }
 
-    /* 清理所有定时器 */
+    /* 清理所有定时器（仅释放动态分配的） */
     for (int i = 0; i < W1_SIZE; i++) {
         coco_timer_t *timer = tw->w1[i];
         while (timer) {
             coco_timer_t *next = timer->next;
-            free(timer);
+            timer_free(tw, timer);
             timer = next;
         }
     }
@@ -93,7 +122,7 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw) {
         coco_timer_t *timer = tw->w2[i];
         while (timer) {
             coco_timer_t *next = timer->next;
-            free(timer);
+            timer_free(tw, timer);
             timer = next;
         }
     }
@@ -102,7 +131,7 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw) {
         coco_timer_t *timer = tw->w3[i];
         while (timer) {
             coco_timer_t *next = timer->next;
-            free(timer);
+            timer_free(tw, timer);
             timer = next;
         }
     }
@@ -111,7 +140,7 @@ void coco_timer_wheel_destroy(coco_timer_wheel_t *tw) {
         coco_timer_t *timer = tw->w4[i];
         while (timer) {
             coco_timer_t *next = timer->next;
-            free(timer);
+            timer_free(tw, timer);
             timer = next;
         }
     }
@@ -189,7 +218,7 @@ coco_timer_t *coco_timer(uint64_t delay_ms, void (*callback)(void*), void *arg) 
         return NULL;
     }
 
-    coco_timer_t *timer = calloc(1, sizeof(coco_timer_t));
+    coco_timer_t *timer = timer_alloc(g_timer_wheel);
     if (!timer) {
         return NULL;
     }
@@ -205,7 +234,7 @@ coco_timer_t *coco_timer(uint64_t delay_ms, void (*callback)(void*), void *arg) 
 
 /* 创建定时器并关联协程 */
 coco_timer_t *coco_timer_add(coco_timer_wheel_t *tw, uint64_t delay_ms, coco_coro_t *coro) {
-    coco_timer_t *timer = calloc(1, sizeof(coco_timer_t));
+    coco_timer_t *timer = timer_alloc(tw);
     if (!timer) {
         return NULL;
     }
@@ -224,7 +253,7 @@ coco_timer_t *coco_timer_ex(coco_sched_t *sched, uint64_t delay_ms, void (*callb
         return NULL;
     }
 
-    coco_timer_t *timer = calloc(1, sizeof(coco_timer_t));
+    coco_timer_t *timer = timer_alloc(sched->timer_wheel);
     if (!timer) {
         return NULL;
     }
@@ -279,7 +308,7 @@ void coco_timer_cancel(coco_timer_t *timer) {
     timer->coro = NULL;
     timer->callback = NULL;
 
-    free(timer);
+    timer_free(g_timer_wheel, timer);
 }
 
 /* 从层级 cascading 定时器到下一层 */
@@ -318,11 +347,11 @@ static void cascade_timers(coco_timer_wheel_t *tw, int level) {
 
         /* 已取消的定时器直接释放 */
         if (timer->cancelled) {
-            free(timer);
+            timer_free(tw, timer);
         } else if (timer->coro || timer->callback) {
             place_timer(tw, timer);
         } else {
-            free(timer);
+            timer_free(tw, timer);
         }
     }
 }
@@ -342,7 +371,7 @@ static void process_w1_range(coco_timer_wheel_t *tw, coco_sched_t *sched,
 
             /* 跳过已取消的定时器 */
             if (timer->cancelled) {
-                free(timer);
+                timer_free(tw, timer);
                 continue;
             }
 
@@ -354,7 +383,7 @@ static void process_w1_range(coco_timer_wheel_t *tw, coco_sched_t *sched,
                 timer->callback(timer->arg);
             }
 
-            free(timer);
+            timer_free(tw, timer);
         }
     }
 }

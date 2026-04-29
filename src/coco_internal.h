@@ -70,6 +70,19 @@ typedef struct coco_timer_wheel coco_timer_wheel_t;
 /* 栈池结构（前置声明） */
 typedef struct stack_pool stack_pool_t;
 
+/* 定时器结构 */
+struct coco_timer {
+    uint64_t expire_time_ms;    /* 过期时间（毫秒） */
+    coco_coro_t *coro;          /* 关联协程 */
+    void (*callback)(void*);    /* 回调函数 */
+    void *arg;                  /* 回调参数 */
+    coco_timer_t *next;         /* 链表下一节点 */
+    coco_timer_t *prev;         /* 链表上一节点 (O(1) 取消) */
+    int level;                  /* 所在层级 (1-4) */
+    int slot;                   /* 所在槽位 */
+    bool cancelled;             /* 已取消标志 */
+};
+
 /* FD 表结构 */
 typedef struct fd_table {
     coco_coro_t **table;      /* FD 到协程的映射数组 */
