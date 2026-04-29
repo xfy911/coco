@@ -98,6 +98,19 @@ typedef struct fd_table {
     uint32_t max_fd;          /* 已注册的最大 FD 值 */
 } fd_table_t;
 
+/* I/O 后端类型 */
+typedef enum {
+    COCO_POLL_EPOLL,      /* Linux epoll */
+    COCO_POLL_KQUEUE,     /* macOS kqueue */
+    COCO_POLL_IOURING     /* Linux io_uring */
+} coco_poll_backend_t;
+
+/* io_uring 上下文（前置声明） */
+typedef struct coco_iouring coco_iouring_t;
+
+/* io_uring 请求（前置声明） */
+typedef struct iouring_req iouring_req_t;
+
 /* 调度器结构 */
 struct coco_sched {
     coco_coro_t *current;      /* 当前运行协程 */
@@ -119,7 +132,9 @@ struct coco_sched {
     uint64_t next_id;          /* 下一个协程 ID */
 
     /* 事件循环 */
-    int poll_fd;               /* epoll/kqueue 实例 */
+    int poll_fd;               /* epoll/kqueue/io_uring 实例 */
+    coco_poll_backend_t poll_backend;  /* I/O 后端类型 */
+    coco_iouring_t *iouring;   /* io_uring 上下文（Linux 5.1+） */
     coco_timer_wheel_t *timer_wheel;  /* 时间轮 */
 
     /* 栈池 */
@@ -166,6 +181,16 @@ void coco_poll_cleanup(coco_sched_t *sched);
 int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short events);
 void coco_poll_unregister(coco_sched_t *sched, int fd);
 int coco_poll_wait(coco_sched_t *sched, int timeout_ms);
+
+/* io_uring API (Linux 5.1+) */
+int coco_poll_init_iouring(coco_sched_t *sched);
+void coco_poll_cleanup_iouring(coco_sched_t *sched);
+int coco_poll_register_iouring(coco_sched_t *sched, int fd, coco_coro_t *coro, short events);
+void coco_poll_unregister_iouring(coco_sched_t *sched, int fd);
+int coco_poll_wait_iouring(coco_sched_t *sched, int timeout_ms);
+int coco_poll_cancel_iouring(coco_sched_t *sched, iouring_req_t *req);
+int coco_iouring_submit_batch(coco_sched_t *sched);
+void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count);
 
 /* FD 表 API */
 fd_table_t *fd_table_create(uint32_t initial_capacity);

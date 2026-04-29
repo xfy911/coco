@@ -59,10 +59,18 @@ set(IO_SOURCES
 # 平台特定源文件
 if(PLATFORM STREQUAL "linux")
     list(APPEND IO_SOURCES src/io/poll_linux.c)
+    list(APPEND IO_SOURCES src/io/poll_iouring.c)
     if(ARCH STREQUAL "x86_64")
         list(APPEND PLATFORM_ASM src/platform/linux/ctx_x86_64.S)
     elseif(ARCH STREQUAL "arm64")
         list(APPEND PLATFORM_ASM src/platform/linux/ctx_arm64.S)
+    endif()
+    # 检查 liburing
+    find_library(LIBURING NAMES uring)
+    if(LIBURING)
+        message(STATUS "Found liburing: ${LIBURING}")
+    else()
+        message(WARNING "liburing not found. io_uring support will be disabled.")
     endif()
 elseif(PLATFORM STREQUAL "macos")
     list(APPEND IO_SOURCES src/io/poll_macos.c)
@@ -87,6 +95,11 @@ add_library(coco STATIC
 
 target_include_directories(coco PUBLIC include)
 target_include_directories(coco PRIVATE src)
+
+# Linux: 链接 liburing (如果可用)
+if(PLATFORM STREQUAL "linux" AND LIBURING)
+    target_link_libraries(coco ${LIBURING})
+endif()
 
 # 测试
 option(COCO_BUILD_TESTS "Build tests" ON)

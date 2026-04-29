@@ -1,7 +1,8 @@
 /**
- * poll_linux.c - epoll 事件循环实现
+ * poll_linux.c - Linux I/O 多路复用实现
  *
- * Linux 使用 epoll 进行 I/O 多路复用。
+ * 自动选择 io_uring (Linux 5.1+) 或 epoll 作为后端。
+ * io_uring 提供更高性能，epoll 作为兼容回退。
  */
 
 #include "../coco_internal.h"
@@ -10,27 +11,51 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/utsname.h>
 
 /* 外部全局变量（TLS） */
 extern _Thread_local coco_sched_t *g_current_sched;
 extern _Thread_local coco_coro_t *g_current_coro;
 
+/* 检测内核版本 */
+static bool kernel_version_at_least(int major, int minor) {
+    struct utsname uts;
+    if (uname(&uts) != 0) return false;
+
+    int kmajor = 0, kminor = 0, kpatch = 0;
+    sscanf(uts.release, "%d.%d.%d", &kmajor, &kminor, &kpatch);
+
+    if (kmajor > major) return true;
+    if (kmajor == major && kminor > minor) return true;
+    if (kmajor == major && kminor == minor) return true;
+    return false;
+}
+
 /**
- * coco_poll_init - 初始化 epoll 实例
+ * coco_poll_init - 初始化 I/O 多路复用
  *
- * @param sched 调度器
- * @return 0 成功，负数错误码
+ * 自动选择 io_uring (Linux 5.1+) 或 epoll。
  */
 int coco_poll_init(coco_sched_t *sched) {
     if (!sched) {
         return COCO_ERROR;
     }
 
-    /* 创建 epoll 实例 */
+    /* 尝试 io_uring (Linux 5.1+) */
+    if (kernel_version_at_least(5, 1)) {
+        if (coco_poll_init_iouring(sched) == COCO_OK) {
+            return COCO_OK;
+        }
+        /* io_uring 初始化失败，回退 epoll */
+    }
+
+    /* 使用 epoll */
     sched->poll_fd = epoll_create1(EPOLL_CLOEXEC);
     if (sched->poll_fd < 0) {
         return COCO_ERROR;
     }
+
+    sched->poll_backend = COCO_POLL_EPOLL;
 
     /* 创建 FD 表 */
     sched->fd_table = fd_table_create(1024);
@@ -44,53 +69,54 @@ int coco_poll_init(coco_sched_t *sched) {
 }
 
 /**
- * coco_poll_cleanup - 清理 epoll 实例
+ * coco_poll_cleanup - 清理 I/O 多路复用资源
  */
 void coco_poll_cleanup(coco_sched_t *sched) {
-    if (sched) {
-        if (sched->poll_fd >= 0) {
-            close(sched->poll_fd);
-            sched->poll_fd = -1;
-        }
-        if (sched->fd_table) {
-            fd_table_destroy(sched->fd_table);
-            sched->fd_table = NULL;
-        }
+    if (!sched) return;
+
+    if (sched->poll_backend == COCO_POLL_IOURING) {
+        coco_poll_cleanup_iouring(sched);
+        return;
+    }
+
+    /* epoll 清理 */
+    if (sched->poll_fd >= 0) {
+        close(sched->poll_fd);
+        sched->poll_fd = -1;
+    }
+    if (sched->fd_table) {
+        fd_table_destroy(sched->fd_table);
+        sched->fd_table = NULL;
     }
 }
 
 /**
  * coco_poll_register - 注册 fd 事件
- *
- * @param sched 调度器
- * @param fd 文件描述符
- * @param coro 协程
- * @param events 事件类型 (EPOLLIN/EPOLLOUT)
- * @return 0 成功，负数错误码
  */
 int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short events) {
-    if (!sched || sched->poll_fd < 0 || fd < 0) {
+    if (!sched || fd < 0) {
         return COCO_ERROR;
     }
 
-    /* 设置 fd 为非阻塞 */
+    if (sched->poll_backend == COCO_POLL_IOURING) {
+        return coco_poll_register_iouring(sched, fd, coro, events);
+    }
+
+    /* epoll 注册 */
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) {
         return COCO_ERROR;
     }
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
-    /* 创建 epoll_event 结构 */
     struct epoll_event ev;
-    ev.events = events | EPOLLONESHOT | EPOLLET;  /* 边缘触发 + one-shot */
+    ev.events = events | EPOLLONESHOT | EPOLLET;
     ev.data.fd = fd;
 
-    /* 注册到 epoll */
     if (epoll_ctl(sched->poll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
         return COCO_ERROR;
     }
 
-    /* 映射 fd 到协程 */
     if (fd_table_set(sched->fd_table, fd, coro) < 0) {
         return COCO_ERROR;
     }
@@ -102,12 +128,12 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
 
 /**
  * coco_poll_unregister - 注销 fd 事件
- *
- * @param sched 调度器
- * @param fd 文件描述符
  */
 void coco_poll_unregister(coco_sched_t *sched, int fd) {
-    if (!sched || sched->poll_fd < 0 || fd < 0) {
+    if (!sched || fd < 0) return;
+
+    if (sched->poll_backend == COCO_POLL_IOURING) {
+        coco_poll_unregister_iouring(sched, fd);
         return;
     }
 
@@ -117,26 +143,23 @@ void coco_poll_unregister(coco_sched_t *sched, int fd) {
 
 /**
  * coco_poll_wait - 等待 I/O 事件
- *
- * @param sched 度器
- * @param timeout_ms 超时时间（毫秒），0 表示不等待，-1 表示无限等待
- * @return 就绪事件数量
  */
 int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
-    if (!sched || sched->poll_fd < 0) {
-        return 0;
+    if (!sched) return 0;
+
+    if (sched->poll_backend == COCO_POLL_IOURING) {
+        return coco_poll_wait_iouring(sched, timeout_ms);
     }
 
+    /* epoll 等待 */
     struct epoll_event events[64];
     int n = epoll_wait(sched->poll_fd, events, 64, timeout_ms);
 
-    /* 处理就绪事件 */
     for (int i = 0; i < n; i++) {
         int fd = events[i].data.fd;
         coco_coro_t *coro = fd_table_get(sched->fd_table, fd);
 
         if (coro && coro->state == COCO_STATE_WAITING) {
-            /* 唤醒协程 */
             enqueue_ready(sched, coro);
             fd_table_clear(sched->fd_table, fd);
             coro->wait_fd = -1;
