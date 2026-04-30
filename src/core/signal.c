@@ -128,10 +128,15 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
         siglongjmp(g_overflow_jmp, 1);
     }
 
-    /* 增长成功，更新协程状态 */
-    coro->current_stack_size = new_size;
+    /* 增长成功，同步更新协程和上下文的栈边界 */
+    coro->current_stack_size = grow_info.new_size;
     coro->stack_base = (void*)grow_info.new_base;
-    coro->stack_size = new_size;
+    coro->stack_size = grow_info.new_size;
+    coro->stack_top = (void*)grow_info.new_limit;  /* 栈顶 = 新上限 */
+
+    /* ctx 已由 coco_grow_stack 更新，再次同步确保一致性 */
+    coro->ctx.stack_base = (void*)grow_info.new_base;
+    coro->ctx.stack_limit = (void*)grow_info.new_limit;
 
     /* 使用 OVERFLOW_RESUME 状态标记已恢复，handle_coro_return 会处理入队 */
     coro->state = COCO_STATE_OVERFLOW_RESUME;
