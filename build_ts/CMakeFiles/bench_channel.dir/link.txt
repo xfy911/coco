@@ -1,1 +1,0 @@
-/usr/bin/cc -fsanitize=thread -Wall -Wextra -O2 -D_COCO_PLATFORM_MACOS -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/bench_channel.dir/tests/benchmark/bench_channel.c.o -o bench_channel  libcoco.a

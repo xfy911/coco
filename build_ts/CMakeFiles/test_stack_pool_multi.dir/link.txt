@@ -1,1 +1,0 @@
-/usr/bin/cc -fsanitize=thread -Wall -Wextra -O2 -D_COCO_PLATFORM_MACOS -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_stack_pool_multi.dir/tests/unit/test_stack_pool_multi.c.o -o test_stack_pool_multi  libcoco.a

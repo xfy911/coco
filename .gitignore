@@ -2,6 +2,7 @@
 build/
 build_coverage/
 build_test/
+build_ts/
 cmake-build-*/
 Testing/
 *.o
