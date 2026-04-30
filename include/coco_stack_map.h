@@ -28,7 +28,10 @@ extern "C" {
 /** Minimum stack size (2KB) - starting size for new coroutines */
 #define COCO_STACK_MIN_SIZE     2048
 
-/** Maximum stack size (1MB) - upper limit for stack growth */
+/** Conservative max stack size (64KB) - upper limit for CONSERVATIVE mode */
+#define COCO_STACK_CONSERVATIVE_MAX (64 * 1024)
+
+/** Maximum stack size (1MB) - upper limit for FULL mode */
 #define COCO_STACK_MAX_SIZE     (1024 * 1024)
 
 /** Default initial stack size (64KB) - matches current coco default */

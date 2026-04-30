@@ -281,9 +281,14 @@ coco_grow_info_t coco_grow_stack(
     info.frames_adjusted = 0;  // Would need frame walk to count
     info.result = COCO_GROW_OK;
 
-    // Free old stack (if it was mmap'd)
-    // For stack pool allocated stacks, don't free - return to pool
-    // This is simplified; real implementation would check allocation source
+    // Free old stack (if it was mmap'd, not from pool)
+    // New stacks are mmap'd with guard page, so we can munmap the old one
+    if (info.old_base != 0) {
+        size_t page_size = sysconf(_SC_PAGESIZE);
+        void* old_stack_start = (void*)(info.old_base - page_size);  // Include guard page
+        size_t old_total_size = info.old_size + page_size;
+        munmap(old_stack_start, old_total_size);
+    }
 
     return info;
 }

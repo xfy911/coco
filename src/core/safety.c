@@ -36,7 +36,7 @@ coco_safety_config_t coco_get_default_config(coco_safety_mode_t mode) {
 
         case COCO_SAFETY_CONSERVATIVE:
             config.min_stack_size = COCO_STACK_MIN_SIZE;
-            config.max_stack_size = COCO_STACK_MAX_SIZE;
+            config.max_stack_size = COCO_STACK_CONSERVATIVE_MAX;  // 64KB limit
             config.grow_threshold_percent = 75;   // Grow at 75% usage
             config.shrink_threshold_percent = 0;  // Never shrink
             config.scan_all_pointers = false;

@@ -179,9 +179,6 @@ struct coco_sched {
 
     /* 老化配置 */
     uint64_t aging_threshold_ms;  /* 老化阈值（等待多久后提升优先级） */
-
-    /* Stack overflow recovery (Phase 8) */
-    void* overflow_jmp;           /* sigjmp_buf for overflow recovery */
 };
 
 /* 上下文 API (汇编实现) */
