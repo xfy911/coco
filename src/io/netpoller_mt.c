@@ -141,13 +141,23 @@ static void *netpoller_thread(void *arg) {
                 continue;
             }
 
+            /* 加锁保护协程信息访问 (修复数据竞争) */
+            pthread_mutex_lock(&np->lock);
+
+            coco_coro_t *read_coro = info->read_coro;
+            coco_coro_t *write_coro = info->write_coro;
+
             /* 分发事件到目标 P */
-            if (filter == EVFILT_READ && info->read_coro) {
-                schedule_ready(info->read_coro);
+            if (filter == EVFILT_READ && read_coro) {
                 info->read_coro = NULL;
-            } else if (filter == EVFILT_WRITE && info->write_coro) {
-                schedule_ready(info->write_coro);
+                pthread_mutex_unlock(&np->lock);
+                schedule_ready(read_coro);
+            } else if (filter == EVFILT_WRITE && write_coro) {
                 info->write_coro = NULL;
+                pthread_mutex_unlock(&np->lock);
+                schedule_ready(write_coro);
+            } else {
+                pthread_mutex_unlock(&np->lock);
             }
 #else
             struct epoll_event *ev = &events[i];
@@ -167,14 +177,23 @@ static void *netpoller_thread(void *arg) {
                 continue;
             }
 
+            /* 加锁保护协程信息访问 (修复数据竞争) */
+            pthread_mutex_lock(&np->lock);
+
+            coco_coro_t *read_coro = info->read_coro;
+            coco_coro_t *write_coro = info->write_coro;
+
             /* 分发事件 */
-            if ((events_mask & EPOLLIN) && info->read_coro) {
-                schedule_ready(info->read_coro);
+            if ((events_mask & EPOLLIN) && read_coro) {
                 info->read_coro = NULL;
-            }
-            if ((events_mask & EPOLLOUT) && info->write_coro) {
-                schedule_ready(info->write_coro);
+                pthread_mutex_unlock(&np->lock);
+                schedule_ready(read_coro);
+            } else if ((events_mask & EPOLLOUT) && write_coro) {
                 info->write_coro = NULL;
+                pthread_mutex_unlock(&np->lock);
+                schedule_ready(write_coro);
+            } else {
+                pthread_mutex_unlock(&np->lock);
             }
 #endif
 
