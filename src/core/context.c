@@ -52,6 +52,10 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
     ctx->x26 = 0;
     ctx->x27 = 0;
     ctx->x28 = 0;
+
+    /* 动态栈增长字段初始化 */
+    ctx->stack_base = NULL;
+    ctx->stack_limit = NULL;
 }
 
 #elif defined(__x86_64__)
@@ -89,6 +93,10 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
     ctx->r13 = 0;
     ctx->r14 = 0;
     ctx->r15 = 0;
+
+    /* 动态栈增长字段初始化 */
+    ctx->stack_base = NULL;
+    ctx->stack_limit = NULL;
 }
 
 #endif

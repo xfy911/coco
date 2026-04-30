@@ -32,6 +32,9 @@ typedef struct coco_ctx {
     void *r14;      /* offset 40 */
     void *r15;      /* offset 48 */
 #endif
+    /* Dynamic stack growth fields (added at end to preserve offsets) */
+    void *stack_base;   /* 协程栈基址 */
+    void *stack_limit;  /* 协程栈当前上限 */
 } coco_ctx_t;
 
 /* 协程结构 */
