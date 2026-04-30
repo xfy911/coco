@@ -54,6 +54,7 @@ typedef enum coco_state {
     COCO_STATE_READY,       /**< Coroutine is ready to be scheduled */
     COCO_STATE_DEAD,        /**< Coroutine has finished execution */
     COCO_STATE_OVERFLOW,    /**< Coroutine stack overflowed (unrecoverable) */
+    COCO_STATE_OVERFLOW_RESUME, /**< Coroutine recovered from overflow, waiting to resume */
 } coco_state_t;
 /** @} */
 

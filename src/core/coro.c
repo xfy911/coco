@@ -300,11 +300,15 @@ static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
             sched->coro_count--;
             break;
         case COCO_STATE_OVERFLOW:
-            /* 栈溢出，调用错误回调 */
+            /* 栈溢出（不可恢复），调用错误回调 */
             if (coro->error_cb) {
                 coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack overflow detected");
             }
             sched->coro_count--;
+            break;
+        case COCO_STATE_OVERFLOW_RESUME:
+            /* 栈溢出已恢复，重新入队继续执行 */
+            enqueue_ready(sched, coro);
             break;
     }
 }

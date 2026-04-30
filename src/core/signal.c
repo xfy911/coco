@@ -133,9 +133,8 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     coro->stack_base = (void*)grow_info.new_base;
     coro->stack_size = new_size;
 
-    /* 协程状态保持 READY，下次调度时继续执行 */
-    coro->state = COCO_STATE_READY;
-    enqueue_ready(sched, coro);
+    /* 使用 OVERFLOW_RESUME 状态标记已恢复，handle_coro_return 会处理入队 */
+    coro->state = COCO_STATE_OVERFLOW_RESUME;
 
     /* 恢复到调度器主循环 */
     siglongjmp(g_overflow_jmp, 1);
