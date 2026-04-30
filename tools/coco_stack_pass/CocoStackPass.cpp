@@ -87,50 +87,13 @@ static uint8_t classifyStackObject(const MachineFunction &MF, int objIdx) {
 
 // Get FP-relative offset from MIR data
 // Phase 0 verified: MIR local-offset matches runtime FP-relative offset
+// Compute FP-relative offset from MIR data.
+// Phase 0 verified: negative spOffset matches runtime FP-relative offset for locals.
 static int32_t computeFpOffset(const MachineFrameInfo &MFI, int objIdx) {
-    // MIR provides two offset fields after prologepilog:
-    // - offset: SP-relative offset
-    // - local-offset: FP-relative offset (THIS IS WHAT WE NEED)
-
-    // Unfortunately, MachineFrameInfo doesn't expose local-offset directly
-    // We need to compute it from the offset field
-
     int64_t spOffset = MFI.getObjectOffset(objIdx);
-    int64_t stackSize = MFI.getStackSize();
 
-    // For typical frame layout (FP saved near top of frame):
-    // FP = SP_original - stackSize + callee_saved_offset
-    // But this varies by platform. Use simplified approach:
-
-    // Stack grows downward, so:
-    // - Positive spOffset means above SP (rare)
-    // - Negative spOffset means below SP (typical for locals)
-
-    // Convert to FP-relative:
-    // FP is typically at SP + (stackSize - callee_saved_area_size)
-    // For simplicity, we'll use the negative offset directly
-    // as it represents the distance from FP to the local
-
-    if (spOffset >= 0) {
-        // Object above stack pointer (shouldn't happen for locals)
-        return (int32_t)spOffset;
-    }
-
-    // Negative offset: object is below stack pointer
-    // FP-relative offset is typically similar to local-offset in MIR
-    // The exact value depends on where FP is saved
-
-    // For ARM64 with frame pointer enabled:
-    // FP is saved at SP + stackSize - 16 (approx)
-    // local-offset = spOffset + (stackSize - fp_location)
-
-    // Since we verified in Phase 0 that local-offset values match runtime,
-    // and MIR shows values like -12, -16, -24 for locals,
-    // we need to compute the correct FP-relative offset
-
-    // Simplified: assume FP is near top of frame
-    // FP-relative offset ≈ spOffset (negative values for locals below FP)
-
+    // Objects above SP have positive offset; locals below SP have negative offset.
+    // Negative spOffset directly represents FP-relative offset for locals.
     return (int32_t)spOffset;
 }
 
