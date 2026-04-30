@@ -102,11 +102,11 @@ void test_channel_close(void) {
 
 static volatile int unbuffered_recv_done = 0;
 static volatile int unbuffered_send_done = 0;
+static int unbuffered_value = 123;  /* 使用静态变量避免栈指针问题 */
 
 void unbuffered_sender(void *arg) {
     coco_channel_t *ch = (coco_channel_t*)arg;
-    int value = 123;
-    int ret = coco_channel_send(ch, &value);
+    int ret = coco_channel_send(ch, &unbuffered_value);
     if (ret == COCO_OK) {
         unbuffered_send_done = 1;
     }
@@ -128,6 +128,7 @@ void test_unbuffered_channel(void) {
     coco_channel_t *ch = coco_channel_create(0);  /* 无缓冲 */
     unbuffered_recv_done = 0;
     unbuffered_send_done = 0;
+    unbuffered_value = 123;  /* 重置值 */
 
     /* 先创建接收者，再创建发送者 */
     coco_create(sched, unbuffered_receiver, ch, 0);
