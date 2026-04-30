@@ -59,16 +59,28 @@ coco_frame_walk_result_t coco_walk_coro_frames(
             frame->func_map = coco_find_func_map(stack_map, ret_addr);
         }
 
-        // Validate chain: FP should decrease (stack grows downward)
+        // Validate chain: On ARM64, FP increases as we go up (stack grows downward)
+        // On x86-64, FP decreases as we go up
+        // For ARM64: prev_fp should be >= current fp (or 0 for base)
+#if defined(__aarch64__)
+        if (prev_fp != 0 && prev_fp < fp) {
+            // ARM64: prev_fp should be higher (closer to stack base)
+            if (prev_fp < fp - 1024) {
+                result.chain_valid = false;
+                result.error_msg = "Frame chain broken: FP decreased unexpectedly on ARM64";
+                break;
+            }
+        }
+#else
+        // x86-64: FP should decrease as we go up the stack
         if (prev_fp != 0 && prev_fp >= fp) {
-            // On some platforms, the outermost frame may have prev_fp > fp
-            // But for coroutine frames, we expect monotonically decreasing
-            if (prev_fp > fp + 1024) {  // Allow small upward jumps for leaf frames
+            if (prev_fp > fp + 1024) {
                 result.chain_valid = false;
                 result.error_msg = "Frame chain broken: FP did not decrease";
                 break;
             }
         }
+#endif
 
         // Set validation flags
         frame->flags = COCO_FRAME_VALID;

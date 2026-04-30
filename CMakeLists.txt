@@ -172,6 +172,7 @@ if(COCO_BUILD_TESTS)
         test_coco_go
         test_sched_hooks
         test_context_value
+        test_frame_walker
     )
 
     foreach(test_name ${UNIT_TESTS})
