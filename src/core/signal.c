@@ -2,15 +2,17 @@
  * signal.c - 栈溢出信号处理
  *
  * 使用 SIGSEGV handler + sigaltstack 检测栈溢出。
- * 当协程栈溢出时，从 fault address 反查协程并标记为 OVERFLOW 状态。
+ * 当协程栈溢出时，尝试动态增长栈并恢复执行。
  */
 
 #include "../coco_internal.h"
+#include "../../include/coco_stack_grow.h"
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 /* 线程局部跳转缓冲区（用于恢复到调度器） */
 static _Thread_local sigjmp_buf g_overflow_jmp;
@@ -67,7 +69,7 @@ static coco_coro_t *find_coro_by_stack(coco_sched_t *sched, void *fault_addr) {
 /**
  * segv_handler - SIGSEGV 信号处理函数
  *
- * 检测栈溢出，标记协程状态，恢复到调度器。
+ * 检测栈溢出，尝试增长栈并恢复执行。
  */
 static void segv_handler(int sig, siginfo_t *info, void *context) {
     (void)sig;
@@ -84,21 +86,59 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     /* 反查溢出的协程 */
     coco_coro_t *coro = find_coro_by_stack(sched, fault_addr);
 
-    if (coro) {
-        /* 标记为栈溢出 */
-        coro->state = COCO_STATE_OVERFLOW;
-
-        /* 调用错误回调（如果有） */
-        if (coro->error_cb) {
-            coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack overflow detected");
-        }
-
-        /* 恢复到调度器 */
-        siglongjmp(g_overflow_jmp, 1);
-    } else {
+    if (!coro) {
         /* 不是栈溢出，是其他段错误，终止进程 */
         _exit(139);
     }
+
+    /* 检查协程是否可动态增长 */
+    if (!coro->stack_growable) {
+        /* 固定栈协程无法增长，标记溢出状态 */
+        coro->state = COCO_STATE_OVERFLOW;
+        if (coro->error_cb) {
+            coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack overflow on fixed-stack coroutine");
+        }
+        siglongjmp(g_overflow_jmp, 1);
+    }
+
+    /* 计算新栈大小 */
+    size_t new_size = coco_calc_new_stack_size(coro->current_stack_size);
+    if (new_size == 0 || new_size > coro->max_stack_size) {
+        /* 超过最大限制，无法增长 */
+        coro->state = COCO_STATE_OVERFLOW;
+        if (coro->error_cb) {
+            coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack growth limit reached");
+        }
+        siglongjmp(g_overflow_jmp, 1);
+    }
+
+    /* 增长栈 */
+    coco_grow_info_t grow_info = coco_grow_stack(
+        &coro->ctx,
+        NULL,  /* No stack map for now (Phase 9 integration) */
+        (uintptr_t)coro->ctx.sp
+    );
+
+    if (grow_info.result != COCO_GROW_OK) {
+        /* 增长失败 */
+        coro->state = COCO_STATE_OVERFLOW;
+        if (coro->error_cb) {
+            coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack growth failed");
+        }
+        siglongjmp(g_overflow_jmp, 1);
+    }
+
+    /* 增长成功，更新协程状态 */
+    coro->current_stack_size = new_size;
+    coro->stack_base = (void*)grow_info.new_base;
+    coro->stack_size = new_size;
+
+    /* 协程状态保持 READY，下次调度时继续执行 */
+    coro->state = COCO_STATE_READY;
+    enqueue_ready(sched, coro);
+
+    /* 恢复到调度器主循环 */
+    siglongjmp(g_overflow_jmp, 1);
 }
 
 /**
