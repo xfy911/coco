@@ -154,33 +154,6 @@ uint32_t coco_adjust_stack_pointers(
     uintptr_t saved_sp
 );
 
-/**
- * @brief Signal handler for stack overflow
- *
- * Installed on sigaltstack to handle SIGSEGV/SIGBUS
- * from stack overflow and trigger growth.
- *
- * @param sig Signal number
- * @param info Signal info
- * @param ucontext User context
- */
-void coco_stack_overflow_handler(
-    int sig,
-    siginfo_t* info,
-    void* ucontext
-);
-
-/**
- * @brief Setup sigaltstack for overflow handling
- *
- * Creates an alternate signal stack for safe handling
- * of stack overflow signals.
- *
- * @param altstack_size Size of alternate stack (default: SIGSTKSZ * 2)
- * @return 0 on success, -1 on error
- */
-int coco_setup_sigaltstack(size_t altstack_size);
-
 #ifdef __cplusplus
 }
 #endif
