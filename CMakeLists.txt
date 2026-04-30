@@ -48,6 +48,7 @@ set(CORE_SOURCES
     src/core/cancel.c
     src/core/coro_go.c
     src/core/stack_map.c
+    src/core/frame_walker.c
     src/sched/locked_queue.c
     src/sched/safepoint.c
     src/sched/global_sched.c
