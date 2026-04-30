@@ -79,21 +79,49 @@ coco_safety_mode_t coco_get_safety_mode(void) {
 
 /**
  * Create a coroutine with specific safety mode.
- * Note: Requires scheduler context. This is a placeholder for future integration.
  */
 coco_coro_t* coco_create_safe(
+    coco_sched_t* sched,
     void (*entry)(void*),
     void* arg,
     size_t stack_size,
     coco_safety_mode_t mode
 ) {
-    // Placeholder: actual implementation requires scheduler integration
-    // For now, return NULL to indicate feature not fully integrated
-    (void)entry;
-    (void)arg;
-    (void)stack_size;
-    (void)mode;
-    return NULL;
+    if (!sched || !entry) {
+        return NULL;
+    }
+
+    coco_safety_config_t config = coco_get_default_config(mode);
+
+    /* Select initial stack size based on mode */
+    if (stack_size == 0) {
+        stack_size = config.min_stack_size;
+    }
+
+    /* Create coroutine using standard path */
+    coco_coro_t* coro = coco_create(sched, entry, arg, stack_size);
+    if (!coro) {
+        return NULL;
+    }
+
+    /* Configure dynamic stack growth for non-NONE modes */
+    if (mode != COCO_SAFETY_NONE) {
+        coro->safety_mode = mode;
+        coro->max_stack_size = config.max_stack_size;
+        coro->stack_growable = true;
+        coro->current_stack_size = stack_size;
+
+        /* Initialize stack bounds in context */
+        coro->ctx.stack_base = coro->stack_base;
+        coro->ctx.stack_limit = (void*)((uintptr_t)coro->stack_top - stack_size);
+    } else {
+        coro->safety_mode = COCO_SAFETY_NONE;
+        coro->max_stack_size = stack_size;  /* Fixed size */
+        coro->stack_growable = false;
+        coro->current_stack_size = stack_size;
+    }
+
+    return coro;
 }
 
 /**

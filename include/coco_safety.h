@@ -16,7 +16,9 @@
 
 /* Forward declarations */
 struct coco_coro;
+struct coco_sched;
 typedef struct coco_coro coco_coro_t;
+typedef struct coco_sched coco_sched_t;
 
 #ifdef __cplusplus
 extern "C" {
@@ -119,6 +121,7 @@ coco_safety_mode_t coco_get_safety_mode(void);
 /**
  * @brief Create a coroutine with specific safety mode
  *
+ * @param sched The scheduler to create the coroutine in
  * @param entry Entry function
  * @param arg Argument to pass
  * @param stack_size Initial stack size (0 = default for mode)
@@ -126,6 +129,7 @@ coco_safety_mode_t coco_get_safety_mode(void);
  * @return Created coroutine handle, or NULL on error
  */
 coco_coro_t* coco_create_safe(
+    coco_sched_t* sched,
     void (*entry)(void*),
     void* arg,
     size_t stack_size,
