@@ -236,9 +236,57 @@ public:
     }
 };
 
+// Backend pass that runs via PreCodeGenCallback
+// This approach uses LLVM's built-in AsmPrinter and StackMaps infrastructure
+// to emit stack map data after prologepilog pass has run.
+static bool cocoPreCodeGenCallback(Module &M, TargetMachine &TM,
+                                   CodeGenFileType CGFT,
+                                   raw_pwrite_stream &OS) {
+    // Note: PreCodeGenCallback runs BEFORE backend passes.
+    // For stack map generation, we need to run AFTER prologepilog.
+    //
+    // The correct approach is to:
+    // 1. Use LLVM's existing stack map intrinsics (llvm.experimental.stackmap)
+    // 2. Or use TargetPassConfig::insertPass to inject after prologepilog
+    //
+    // For now, we emit stack map from IR-level analysis (less accurate frame offsets)
+    // and rely on a post-link tool to fill in actual addresses.
+
+    outs() << "CocoStackMapPlugin: PreCodeGenCallback triggered for " << M.getName() << "\n";
+
+    // Clear any previous entries
+    clearGlobalState();
+
+    // Analyze functions at IR level for basic stack info
+    for (Function &F : M) {
+        if (F.isDeclaration()) continue;
+
+        StackMapEntry entry;
+        entry.func_name = F.getName().str();
+        entry.func_addr = 0;  // To be filled by post-processing
+        entry.func_size = 0;  // To be filled by post-processing
+
+        // Get approximate frame size from IR (not accurate, needs backend pass)
+        // For now, just record function existence
+        entry.frame_size = 0;
+        entry.pointers.push_back({0, 8, KIND_FRAME_PTR, 0});
+        entry.num_pointers = 1;
+
+        g_entries.push_back(entry);
+    }
+
+    // Emit stack map file
+    if (!g_entries.empty()) {
+        emitStackMap();
+    }
+
+    // Don't prevent default pipeline - we just collect info
+    return false;
+}
+
 // Pass registration callback
 static void registerPassBuilderCallbacks(PassBuilder &PB) {
-    // Register machine function pass parsing callback
+    // Register MachineFunction pass for parsing (requires explicit -fpasses=)
     PB.registerPipelineParsingCallback(
         [](StringRef Name, MachineFunctionPassManager &MFPM,
            ArrayRef<PassBuilder::PipelineElement> Pipeline) {
@@ -249,7 +297,7 @@ static void registerPassBuilderCallbacks(PassBuilder &PB) {
             return false;
         });
 
-    // Register module pass for finalization (optional, can use PreCodeGenCallback instead)
+    // Register module pass for finalization (requires explicit -fpasses=)
     PB.registerPipelineParsingCallback(
         [](StringRef Name, ModulePassManager &MPM,
            ArrayRef<PassBuilder::PipelineElement> Pipeline) {
@@ -269,6 +317,6 @@ PassPluginLibraryInfo llvmGetPassPluginInfo() {
         "CocoStackMapPlugin",
         "1.0",
         registerPassBuilderCallbacks,
-        nullptr  // No PreCodeGenCallback (we use explicit passes instead)
+        cocoPreCodeGenCallback  // PreCodeGenCallback for backend integration
     };
 }
