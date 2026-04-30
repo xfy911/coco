@@ -260,12 +260,17 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
         coro->stack_high_water_mark = (size_t)coro->stack_top;
     }
 
-    /* 设置溢出恢复点 */
-    if (coco_set_overflow_checkpoint() == 0) {
-        /* 正常执行 */
-        coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+    /* 设置溢出恢复点（仅对可增长协程） */
+    if (coro->stack_growable) {
+        if (coco_set_overflow_checkpoint() == 0) {
+            /* 正常执行 */
+            coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+        } else {
+            /* 从栈溢出恢复，coro 状态已由 handler 设置 */
+        }
     } else {
-        /* 从栈溢出恢复，coro 状态已由 handler 设置 */
+        /* 固定栈协程直接切换 */
+        coco_ctx_switch(&sched->main_ctx, &coro->ctx);
     }
 
     /* 切换回调度器后，更新遥测 */
