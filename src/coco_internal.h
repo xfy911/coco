@@ -6,6 +6,7 @@
 #define COCO_INTERNAL_H
 
 #include "../include/coco.h"
+#include "../include/coco_safety.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -79,6 +80,12 @@ struct coco_coro {
 
     /* O_NONBLOCK 缓存位图 (FD 0-31) */
     uint32_t nonblock_fds_set;
+
+    /* Dynamic stack growth fields (Phase 8) */
+    coco_safety_mode_t safety_mode;     /* Safety mode for this coroutine */
+    size_t max_stack_size;              /* Maximum allowed stack size */
+    bool stack_growable;                /* Whether stack can grow dynamically */
+    size_t current_stack_size;          /* Current stack size (updated on growth) */
 };
 
 /* 时间轮结构（前置声明） */

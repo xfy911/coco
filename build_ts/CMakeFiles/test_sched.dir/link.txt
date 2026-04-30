@@ -1,0 +1,1 @@
+/usr/bin/cc -fsanitize=thread -Wall -Wextra -O2 -D_COCO_PLATFORM_MACOS -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_sched.dir/tests/unit/test_sched.c.o -o test_sched  libcoco.a
