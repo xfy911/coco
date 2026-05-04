@@ -610,3 +610,10 @@ coco_priority_t coco_get_priority(coco_coro_t *coro) {
 coco_sched_t *coco_sched_get_current(void) {
     return g_current_sched;
 }
+
+uint32_t coco_sched_get_stack_map_count(coco_sched_t *sched) {
+    if (!sched || !sched->stack_map) {
+        return 0;
+    }
+    return sched->stack_map->num_funcs;
+}

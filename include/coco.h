@@ -327,6 +327,15 @@ int coco_sched_run_once(coco_sched_t *sched);
  * the scheduler associated with the calling thread.
  */
 coco_sched_t *coco_sched_get_current(void);
+
+/**
+ * @brief Check if a stack map is loaded for the scheduler
+ * @param sched Scheduler pointer
+ * @return Number of functions in the stack map, or 0 if not loaded
+ *
+ * Used for testing and verification of stack map loading.
+ */
+uint32_t coco_sched_get_stack_map_count(coco_sched_t *sched);
 /** @} */
 
 /* === Coroutine Lifecycle API === */
