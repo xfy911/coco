@@ -1,13 +1,15 @@
 /**
  * verify_format.c - Verify .coco_stackmap binary format
  * US-217: Binary format verification
+ * Supports version 2 format with function names
  */
 
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 
-/* Stack map header structure (matches coco_stack_map.h) */
+/* Stack map header structure */
 typedef struct {
     uint32_t magic;
     uint32_t version;
@@ -22,20 +24,23 @@ typedef struct {
     uint8_t flags;
 } coco_ptr_desc_t;
 
-/* Function map entry header */
-typedef struct {
-    uint64_t func_addr;
-    uint64_t func_size;
-    uint32_t frame_size;
-    uint32_t num_pointers;
-} coco_func_map_header_t;
-
 /* Pointer kinds */
 #define KIND_FRAME_PTR   0
 #define KIND_RETURN_ADDR 1
 #define KIND_LOCAL_PTR   2
 #define KIND_SPILL_REG   3
 #define KIND_MAYBE_PTR   4
+
+const char* kind_to_string(uint8_t kind) {
+    switch (kind) {
+        case KIND_FRAME_PTR:   return "FRAME_PTR";
+        case KIND_RETURN_ADDR: return "RETURN_ADDR";
+        case KIND_LOCAL_PTR:   return "LOCAL_PTR";
+        case KIND_SPILL_REG:   return "SPILL_REG";
+        case KIND_MAYBE_PTR:   return "MAYBE_PTR";
+        default:               return "UNKNOWN";
+    }
+}
 
 int main(int argc, char *argv[]) {
     const char *path = "output.coco_stackmap";
@@ -72,31 +77,61 @@ int main(int argc, char *argv[]) {
     printf("[PASS] Magic is correct\n");
 
     /* Verify version */
-    if (header.version != 1) {
-        printf("ERROR: Unsupported version %u (expected 1)\n", header.version);
+    if (header.version < 1 || header.version > 2) {
+        printf("ERROR: Unsupported version %u (expected 1 or 2)\n", header.version);
         fclose(f);
         return 1;
     }
-    printf("[PASS] Version is correct\n");
+    printf("[PASS] Version %u is supported\n", header.version);
 
     /* Read function entries */
     printf("\nFunction Entries:\n");
+    int nonzero_addr_count = 0;
+
     for (uint32_t i = 0; i < header.num_funcs; i++) {
-        coco_func_map_header_t func;
-        if (fread(&func, sizeof(func), 1, f) != 1) {
+        /* Read function header */
+        uint64_t func_addr, func_size;
+        uint32_t frame_size, num_pointers;
+
+        if (fread(&func_addr, sizeof(func_addr), 1, f) != 1 ||
+            fread(&func_size, sizeof(func_size), 1, f) != 1 ||
+            fread(&frame_size, sizeof(frame_size), 1, f) != 1 ||
+            fread(&num_pointers, sizeof(num_pointers), 1, f) != 1) {
             printf("ERROR: Failed to read function %u header\n", i);
             fclose(f);
             return 1;
         }
 
-        printf("\n  Function %u:\n", i);
-        printf("    Address:     0x%016lX\n", (unsigned long)func.func_addr);
-        printf("    Size:        %lu bytes\n", (unsigned long)func.func_size);
-        printf("    Frame size:  %u bytes\n", func.frame_size);
-        printf("    Pointers:    %u\n", func.num_pointers);
+        /* Read function name (version 2+) */
+        char func_name[256] = {0};
+        if (header.version >= 2) {
+            uint16_t name_len;
+            if (fread(&name_len, sizeof(name_len), 1, f) != 1) {
+                printf("ERROR: Failed to read function %u name length\n", i);
+                fclose(f);
+                return 1;
+            }
+            if (name_len > 0 && name_len < sizeof(func_name)) {
+                if (fread(func_name, 1, name_len, f) != name_len) {
+                    printf("ERROR: Failed to read function %u name\n", i);
+                    fclose(f);
+                    return 1;
+                }
+            }
+        }
+
+        printf("\n  Function %u: '%s'\n", i, func_name[0] ? func_name : "(unnamed)");
+        printf("    Address:     0x%016lX\n", (unsigned long)func_addr);
+        printf("    Size:        %lu bytes\n", (unsigned long)func_size);
+        printf("    Frame size:  %u bytes\n", frame_size);
+        printf("    Pointers:    %u\n", num_pointers);
+
+        if (func_addr != 0) {
+            nonzero_addr_count++;
+        }
 
         /* Read pointer descriptors */
-        for (uint32_t j = 0; j < func.num_pointers; j++) {
+        for (uint32_t j = 0; j < num_pointers; j++) {
             coco_ptr_desc_t ptr;
             if (fread(&ptr, sizeof(ptr), 1, f) != 1) {
                 printf("ERROR: Failed to read pointer %u for function %u\n", j, i);
@@ -104,27 +139,23 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
 
-            const char *kind_str = "UNKNOWN";
-            switch (ptr.kind) {
-                case KIND_FRAME_PTR:   kind_str = "FRAME_PTR"; break;
-                case KIND_RETURN_ADDR: kind_str = "RETURN_ADDR"; break;
-                case KIND_LOCAL_PTR:   kind_str = "LOCAL_PTR"; break;
-                case KIND_SPILL_REG:   kind_str = "SPILL_REG"; break;
-                case KIND_MAYBE_PTR:   kind_str = "MAYBE_PTR"; break;
-            }
-
             printf("      Pointer %u: offset=%d, size=%u, kind=%s\n",
-                   j, ptr.frame_offset, ptr.size, kind_str);
+                   j, ptr.frame_offset, ptr.size, kind_to_string(ptr.kind));
         }
     }
 
     fclose(f);
 
     printf("\n=== PASS: Format verified successfully ===\n");
-    printf("\nNotes:\n");
-    printf("  - Function addresses are 0 (need post-link processing)\n");
-    printf("  - Frame sizes may be 0 (IR-level analysis limitation)\n");
-    printf("  - For accurate frame offsets, use MachineFunctionPass\n");
+    printf("\nSummary:\n");
+    printf("  Functions: %u\n", header.num_funcs);
+    printf("  Non-zero addresses: %d/%u\n", nonzero_addr_count, header.num_funcs);
+
+    if (nonzero_addr_count == 0) {
+        printf("\nNote: All addresses are 0 (need post-processing with post_process.py)\n");
+    } else if (nonzero_addr_count == (int)header.num_funcs) {
+        printf("\n[PASS] All function addresses have been resolved\n");
+    }
 
     return 0;
 }

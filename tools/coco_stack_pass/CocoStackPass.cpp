@@ -98,6 +98,7 @@ static int32_t computeFpOffset(const MachineFrameInfo &MFI, int objIdx) {
 }
 
 // Emit stack map in binary format (matches coco_stack_map.h layout)
+// Version 2 format includes function names for post-link processing
 static void emitStackMap() {
     std::error_code EC;
     raw_fd_ostream out(g_output_path, EC, sys::fs::OF_None);
@@ -110,7 +111,7 @@ static void emitStackMap() {
     // Binary format (little-endian):
     // Header:
     //   uint32_t magic = 0xC0C0
-    //   uint32_t version = 1
+    //   uint32_t version = 2  (added function name section)
     //   uint32_t num_funcs
     //
     // For each function:
@@ -118,10 +119,12 @@ static void emitStackMap() {
     //   uint64_t func_size
     //   uint32_t frame_size
     //   uint32_t num_pointers
+    //   uint16_t name_len
+    //   char[name_len] func_name (NOT null-terminated)
     //   CocoPtrDesc[num_pointers] (packed, no padding)
 
     uint32_t magic = 0xC0C0;
-    uint32_t version = 1;
+    uint32_t version = 2;  // Version 2 includes function names
     uint32_t num_funcs = (uint32_t)g_entries.size();
 
     // Write header
@@ -136,6 +139,11 @@ static void emitStackMap() {
         out.write(reinterpret_cast<const char*>(&entry.frame_size), sizeof(entry.frame_size));
         out.write(reinterpret_cast<const char*>(&entry.num_pointers), sizeof(entry.num_pointers));
 
+        // Write function name (length-prefixed string)
+        uint16_t name_len = (uint16_t)entry.func_name.size();
+        out.write(reinterpret_cast<const char*>(&name_len), sizeof(name_len));
+        out.write(entry.func_name.data(), name_len);
+
         // Write pointer descriptors (packed, no padding between them)
         for (const auto &ptr : entry.pointers) {
             out.write(reinterpret_cast<const char*>(&ptr), sizeof(CocoPtrDesc));
@@ -145,8 +153,7 @@ static void emitStackMap() {
     out.close();
 
     outs() << "Stack map generated: " << g_output_path
-           << " (" << num_funcs << " functions, "
-           << g_entries.size() << " entries)\n";
+           << " (" << num_funcs << " functions, version " << version << ")\n";
 }
 
 // Clear global state for next compilation
