@@ -179,6 +179,9 @@ struct coco_sched {
 
     /* 老化配置 */
     uint64_t aging_threshold_ms;  /* 老化阈值（等待多久后提升优先级） */
+
+    /* Stack map for dynamic stack growth (Phase 11) */
+    struct coco_stack_map *stack_map;  /* Loaded stack map for pointer adjustment */
 };
 
 /* 上下文 API (汇编实现) */

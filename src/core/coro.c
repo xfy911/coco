@@ -4,6 +4,7 @@
 
 #include "../coco_internal.h"
 #include "stack_pool.h"
+#include "../../include/coco_stack_map.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -107,6 +108,14 @@ coco_sched_t *coco_sched_create(void) {
     /* 初始化老化阈值：100ms 后提升优先级 */
     sched->aging_threshold_ms = 100;
 
+    /* 加载 stack map (Phase 11) */
+    const char *stackmap_path = getenv("COCO_STACKMAP_PATH");
+    if (!stackmap_path) {
+        stackmap_path = "output.coco_stackmap";
+    }
+    sched->stack_map = coco_load_stack_map(stackmap_path);
+    /* Note: stack_map may be NULL if file not found - this is non-fatal */
+
     return sched;
 }
 
@@ -143,6 +152,12 @@ void coco_sched_destroy(coco_sched_t *sched) {
     if (sched->stack_pool) {
         stack_pool_destroy(sched->stack_pool);
         sched->stack_pool = NULL;
+    }
+
+    /* 释放 stack map (Phase 11) */
+    if (sched->stack_map) {
+        coco_free_stack_map(sched->stack_map);
+        sched->stack_map = NULL;
     }
 
     free(sched->coro_table);
