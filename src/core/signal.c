@@ -20,6 +20,9 @@ static _Thread_local sigjmp_buf g_overflow_jmp;
 /* 线程局部调度器指针（用于恢复） */
 static _Thread_local coco_sched_t *g_overflow_sched = NULL;
 
+/* 线程局部 stack map 指针（Phase 11） */
+static _Thread_local coco_stack_map_t *g_current_stack_map = NULL;
+
 /* 信号栈大小（需要足够大以运行 handler） */
 #define SIGNAL_STACK_SIZE (64 * 1024)
 
@@ -115,7 +118,7 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     /* 增长栈 */
     coco_grow_info_t grow_info = coco_grow_stack(
         &coro->ctx,
-        NULL,  /* No stack map for now (Phase 9 integration) */
+        g_current_stack_map,  /* Use loaded stack map for pointer adjustment (Phase 11) */
         (uintptr_t)coro->ctx.sp
     );
 
@@ -157,6 +160,9 @@ int coco_signal_init(coco_sched_t *sched) {
     }
 
     g_overflow_sched = sched;
+
+    /* 设置线程局部 stack map 指针 (Phase 11) */
+    g_current_stack_map = sched->stack_map;
 
     /* 设置替代信号栈（避免在溢出的栈上运行 handler） */
     g_sigaltstack.ss_sp = malloc(SIGNAL_STACK_SIZE);
@@ -211,6 +217,7 @@ void coco_signal_cleanup(void) {
     }
 
     g_overflow_sched = NULL;
+    g_current_stack_map = NULL;  /* Clear stack map pointer (Phase 11) */
 }
 
 /**
