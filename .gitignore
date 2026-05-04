@@ -26,3 +26,8 @@ Thumbs.db
 # Debug
 *.dSYM/
 *.out
+
+# Stack map test artifacts
+*.coco_stackmap
+tools/coco_stack_pass/post_process.sh
+tools/coco_stack_pass/test_binary
