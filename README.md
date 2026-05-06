@@ -396,6 +396,39 @@ void coco_channel_destroy(coco_channel_t *ch);
 ```
 Destroy a channel and free resources.
 
+### Channel Select
+
+```c
+int coco_channel_select(coco_select_case_t *cases, int ncases,
+                        uint64_t timeout_ms, int has_default);
+```
+Select over multiple channel operations (Go-style). Blocks until one case is ready, timeout expires, or default is taken. Returns the index of the ready case, `COCO_SELECT_TIMEOUT`, or `COCO_SELECT_DEFAULT`.
+
+```c
+typedef struct coco_select_case {
+    coco_channel_t *chan;        /* Channel */
+    enum coco_select_dir dir;    /* COCO_SELECT_SEND or COCO_SELECT_RECV */
+    void *val;                   /* Send value or recv output pointer */
+    int result;                  /* Result: COCO_OK or error */
+} coco_select_case_t;
+```
+
+**Example:**
+
+```c
+void *val1, *val2;
+coco_select_case_t cases[2] = {
+    { ch1, COCO_SELECT_RECV, &val1, 0 },
+    { ch2, COCO_SELECT_RECV, &val2, 0 },
+};
+int idx = coco_channel_select(cases, 2, 1000, 0);
+if (idx >= 0) {
+    printf("Case %d ready, result=%d\n", idx, cases[idx].result);
+} else if (idx == COCO_SELECT_TIMEOUT) {
+    printf("Timeout\n");
+}
+```
+
 ### I/O
 
 All I/O operations block the calling coroutine and resume when the operation is ready.
