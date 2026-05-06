@@ -106,7 +106,11 @@ elseif(PLATFORM STREQUAL "macos")
     endif()
 elseif(PLATFORM STREQUAL "windows")
     list(APPEND IO_SOURCES src/io/poll_windows.c)
-    list(APPEND PLATFORM_ASM src/platform/windows/ctx_x86_64.S)
+    if(ARCH STREQUAL "x86_64")
+        list(APPEND PLATFORM_ASM src/platform/windows/ctx_x86_64.S)
+    elseif(ARCH STREQUAL "arm64")
+        list(APPEND PLATFORM_ASM src/platform/windows/ctx_arm64.S)
+    endif()
 endif()
 
 # 创建库
