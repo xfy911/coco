@@ -12,6 +12,7 @@
 /* 线程局部存储（多线程模式） */
 _Thread_local coco_sched_t *g_current_sched = NULL;
 _Thread_local coco_coro_t *g_current_coro = NULL;
+_Thread_local coco_ctx_t *g_return_ctx = NULL;
 
 /* 协程入口包装函数 */
 void coro_entry_wrapper(void *arg) {
@@ -334,6 +335,7 @@ int coco_sched_run(coco_sched_t *sched) {
     }
 
     g_current_sched = sched;
+    g_return_ctx = &sched->main_ctx;
 
     while (sched->coro_count > 0) {
         /* 处理就绪队列 */
@@ -396,6 +398,7 @@ int coco_sched_run_once(coco_sched_t *sched) {
     }
 
     g_current_sched = sched;
+    g_return_ctx = &sched->main_ctx;
 
     coco_coro_t *coro = dequeue_ready(sched);
     switch_to_coro(sched, coro);
@@ -464,9 +467,8 @@ void coco_exit(coco_coro_t *coro, void *result) {
     coro->result = result;
 
     /* 切换回调度器 */
-    coco_sched_t *sched = g_current_sched;
     g_current_coro = NULL;
-    coco_ctx_switch(&coro->ctx, &sched->main_ctx);
+    coco_ctx_switch(&coro->ctx, g_return_ctx);
 }
 
 void coco_yield(void) {
@@ -483,7 +485,7 @@ void coco_yield(void) {
     }
 
     /* 切换回调度器 */
-    coco_ctx_switch(&coro->ctx, &sched->main_ctx);
+    coco_ctx_switch(&coro->ctx, g_return_ctx);
 }
 
 void *coco_join(coco_coro_t *coro) {

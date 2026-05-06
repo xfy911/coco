@@ -92,6 +92,20 @@ typedef struct coco_ctx {
 #define COCO_CTX_ASM_SIZE 56  /* 汇编保存的大小 */
 #endif
 
+/* Channel select types */
+typedef struct coco_select_node {
+    coco_channel_t *chan;        /* Channel this node is registered on */
+    coco_coro_t *coro;           /* Owning coroutine */
+    int case_index;              /* Index in the select case array */
+    int is_send;                 /* 1=send case, 0=recv case */
+    union {
+        void *send_val;          /* Value to send (for send cases) */
+        void **recv_ptr;         /* Pointer to store received value (for recv cases) */
+    };
+    int registered;              /* 1 if currently on channel wait queue */
+    struct coco_select_node *next; /* Link to next node in same select */
+} coco_select_node_t;
+
 /* 协程结构 */
 struct coco_coro {
     uint64_t id;
@@ -140,6 +154,12 @@ struct coco_coro {
     size_t max_stack_size;              /* Maximum allowed stack size */
     bool stack_growable;                /* Whether stack can grow dynamically */
     size_t current_stack_size;          /* Current stack size (updated on growth) */
+
+    /* Channel select state (NULL when not in select) */
+    coco_select_node_t *select_nodes;
+    int select_case_count;
+    int select_ready_index;           /* -1 = none ready, -2 = timeout, -3 = default */
+    coco_timer_t *select_timer;       /* Timer for select timeout (NULL if none) */
 };
 
 /* 时间轮结构（前置声明） */
@@ -242,6 +262,9 @@ struct coco_sched {
 void coco_ctx_save(coco_ctx_t *ctx);
 void coco_ctx_load(coco_ctx_t *ctx);
 void coco_ctx_switch(coco_ctx_t *current, coco_ctx_t *target);
+
+/* 线程局部返回上下文 (ST: &sched->main_ctx, MT: &p->m->ctx) */
+extern _Thread_local coco_ctx_t *g_return_ctx;
 
 /* 上下文初始化 (C 实现) */
 void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void *arg);

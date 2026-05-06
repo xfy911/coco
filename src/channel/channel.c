@@ -3,12 +3,14 @@
  *
  * 支持有缓冲（环形缓冲区）和无缓冲（同步传递）channel。
  * 使用嵌入式等待节点，避免动态内存分配。
+ * 支持 Go 风格的 channel select（多路复用）。
  */
 
 #include "../coco_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <assert.h>
 
 /* 外部全局变量（TLS，在 coro.c 中定义） */
 extern _Thread_local coco_sched_t *g_current_sched;
@@ -25,12 +27,20 @@ struct coco_channel {
     size_t tail;              /* 写位置 */
     size_t count;             /* 当前元素数 */
 
-    /* 等待队列（使用协程的嵌入式 wait_node） */
-    coco_coro_t *send_wait_head;  /* 发送等待队列 */
+    /* 等待队列（普通协程，使用嵌入式 wait_node） */
+    coco_coro_t *send_wait_head;
     coco_coro_t *send_wait_tail;
-    coco_coro_t *recv_wait_head;  /* 接收等待队列 */
+    coco_coro_t *recv_wait_head;
     coco_coro_t *recv_wait_tail;
+
+    /* 等待队列（select 协程，使用 select_node 链表） */
+    coco_select_node_t *send_select_head;
+    coco_select_node_t *send_select_tail;
+    coco_select_node_t *recv_select_head;
+    coco_select_node_t *recv_select_tail;
 };
+
+/* === 普通协程等待队列操作 === */
 
 /* 添加协程到等待队列尾部 */
 static void enqueue_wait_coro(coco_coro_t **head, coco_coro_t **tail, coco_coro_t *coro) {
@@ -57,6 +67,89 @@ static coco_coro_t *dequeue_wait_coro(coco_coro_t **head, coco_coro_t **tail) {
     coro->wait_node.in_use = false;
     coro->wait_node.next_waiter = NULL;
     return coro;
+}
+
+/* === Select 协程等待队列操作 === */
+
+/* 添加 select_node 到等待队列尾部 */
+static void enqueue_select_node(coco_select_node_t **head, coco_select_node_t **tail,
+                                coco_select_node_t *node) {
+    node->next = NULL;
+    if (*tail) {
+        (*tail)->next = node;
+    } else {
+        *head = node;
+    }
+    *tail = node;
+    node->registered = 1;
+}
+
+/* 从等待队列头部取出 select_node */
+static coco_select_node_t *dequeue_select_node(coco_select_node_t **head,
+                                               coco_select_node_t **tail) {
+    coco_select_node_t *node = *head;
+    if (!node) {
+        return NULL;
+    }
+    *head = node->next;
+    if (!*head) {
+        *tail = NULL;
+    }
+    node->next = NULL;
+    node->registered = 0;
+    return node;
+}
+
+/* 从等待队列中移除指定 select_node（任意位置） */
+static void remove_select_node(coco_select_node_t **head, coco_select_node_t **tail,
+                               coco_select_node_t *node) {
+    if (*head == node) {
+        dequeue_select_node(head, tail);
+        return;
+    }
+    coco_select_node_t *prev = *head;
+    while (prev && prev->next != node) {
+        prev = prev->next;
+    }
+    if (prev) {
+        prev->next = node->next;
+        if (*tail == node) {
+            *tail = prev;
+        }
+        node->next = NULL;
+        node->registered = 0;
+    }
+}
+
+/* === Select 辅助函数 === */
+
+/* 从所有 select 注册的 channel 等待队列中移除协程 */
+static void select_dequeue_all(coco_coro_t *coro) {
+    coco_select_node_t *nodes = coro->select_nodes;
+    for (int i = 0; i < coro->select_case_count; i++) {
+        if (nodes[i].registered) {
+            coco_channel_t *ch = nodes[i].chan;
+            if (ch) {
+                if (nodes[i].is_send) {
+                    remove_select_node(&ch->send_select_head, &ch->send_select_tail, &nodes[i]);
+                } else {
+                    remove_select_node(&ch->recv_select_head, &ch->recv_select_tail, &nodes[i]);
+                }
+            }
+            nodes[i].registered = 0;
+        }
+    }
+}
+
+/* select 超时回调 */
+static void select_timeout_cb(void *arg) {
+    coco_coro_t *coro = (coco_coro_t *)arg;
+    if (coro->select_nodes && coro->select_ready_index == -1) {
+        coro->select_ready_index = COCO_SELECT_TIMEOUT;
+        select_dequeue_all(coro);
+        coro->select_timer = NULL;
+        enqueue_ready(g_current_sched, coro);
+    }
 }
 
 /**
@@ -105,12 +198,35 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
         return COCO_ERROR;
     }
 
-    /* 检查是否有接收者在等待 */
+    /* 优先唤醒普通接收者 */
     coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
     if (recv_waiter) {
-        /* 直接传递给接收者 */
         recv_waiter->wait_node.value = value;
         enqueue_ready(sched, recv_waiter);
+        return COCO_OK;
+    }
+
+    /* 然后唤醒 select 接收者 */
+    coco_select_node_t *recv_node = dequeue_select_node(&ch->recv_select_head,
+                                                        &ch->recv_select_tail);
+    if (recv_node) {
+        coco_coro_t *sel_coro = recv_node->coro;
+        assert(sel_coro->select_nodes != NULL);
+        assert(sel_coro->select_ready_index == -1);
+
+        sel_coro->wait_node.value = value;
+        sel_coro->select_ready_index = recv_node->case_index;
+
+        /* 从所有其他 channel 的 select 队列中移除 */
+        select_dequeue_all(sel_coro);
+
+        /* 取消 select 定时器 */
+        if (sel_coro->select_timer) {
+            coco_timer_cancel(sel_coro->select_timer);
+            sel_coro->select_timer = NULL;
+        }
+
+        enqueue_ready(sched, sel_coro);
         return COCO_OK;
     }
 
@@ -158,7 +274,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
         return COCO_ERROR;
     }
 
-    if (ch->closed && ch->count == 0 && !ch->send_wait_head) {
+    if (ch->closed && ch->count == 0 && !ch->send_wait_head && !ch->send_select_head) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -175,23 +291,63 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
         ch->head = (ch->head + 1) % ch->capacity;
         ch->count--;
 
-        /* 缓冲区有空间，唤醒发送者 */
+        /* 缓冲区有空间，尝试唤醒发送者 */
         coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (send_waiter) {
             ch->buffer[ch->tail] = send_waiter->wait_node.value;
             ch->tail = (ch->tail + 1) % ch->capacity;
             ch->count++;
             enqueue_ready(sched, send_waiter);
+        } else {
+            /* 尝试唤醒 select 发送者 */
+            coco_select_node_t *send_node = dequeue_select_node(&ch->send_select_head,
+                                                                &ch->send_select_tail);
+            if (send_node) {
+                coco_coro_t *sel_coro = send_node->coro;
+                assert(sel_coro->select_nodes != NULL);
+                assert(sel_coro->select_ready_index == -1);
+
+                ch->buffer[ch->tail] = send_node->send_val;
+                ch->tail = (ch->tail + 1) % ch->capacity;
+                ch->count++;
+
+                sel_coro->select_ready_index = send_node->case_index;
+                select_dequeue_all(sel_coro);
+                if (sel_coro->select_timer) {
+                    coco_timer_cancel(sel_coro->select_timer);
+                    sel_coro->select_timer = NULL;
+                }
+                enqueue_ready(sched, sel_coro);
+            }
         }
 
         return COCO_OK;
     }
 
-    /* 无缓冲 channel: 检查是否有发送者等待 */
+    /* 无缓冲 channel: 优先检查普通发送者 */
     coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
     if (send_waiter) {
         *value = send_waiter->wait_node.value;
         enqueue_ready(sched, send_waiter);
+        return COCO_OK;
+    }
+
+    /* 然后检查 select 发送者 */
+    coco_select_node_t *send_node = dequeue_select_node(&ch->send_select_head,
+                                                        &ch->send_select_tail);
+    if (send_node) {
+        coco_coro_t *sel_coro = send_node->coro;
+        assert(sel_coro->select_nodes != NULL);
+        assert(sel_coro->select_ready_index == -1);
+
+        *value = send_node->send_val;
+        sel_coro->select_ready_index = send_node->case_index;
+        select_dequeue_all(sel_coro);
+        if (sel_coro->select_timer) {
+            coco_timer_cancel(sel_coro->select_timer);
+            sel_coro->select_timer = NULL;
+        }
+        enqueue_ready(sched, sel_coro);
         return COCO_OK;
     }
 
@@ -233,7 +389,7 @@ void coco_channel_close(coco_channel_t *ch) {
     ch->closed = 1;
     coco_sched_t *sched = g_current_sched;
 
-    /* 唤醒所有等待的接收者 */
+    /* 唤醒所有普通等待的接收者 */
     while (ch->recv_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (sched && coro) {
@@ -241,13 +397,201 @@ void coco_channel_close(coco_channel_t *ch) {
         }
     }
 
-    /* 唤醒所有等待的发送者 */
+    /* 唤醒所有 select 等待的接收者 */
+    while (ch->recv_select_head) {
+        coco_select_node_t *node = dequeue_select_node(&ch->recv_select_head,
+                                                       &ch->recv_select_tail);
+        if (node) {
+            coco_coro_t *sel_coro = node->coro;
+            if (sel_coro && sel_coro->select_ready_index == -1) {
+                sel_coro->select_ready_index = node->case_index;
+                select_dequeue_all(sel_coro);
+                if (sel_coro->select_timer) {
+                    coco_timer_cancel(sel_coro->select_timer);
+                    sel_coro->select_timer = NULL;
+                }
+                enqueue_ready(sched, sel_coro);
+            }
+        }
+    }
+
+    /* 唤醒所有普通等待的发送者 */
     while (ch->send_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (sched && coro) {
             enqueue_ready(sched, coro);
         }
     }
+
+    /* 唤醒所有 select 等待的发送者 */
+    while (ch->send_select_head) {
+        coco_select_node_t *node = dequeue_select_node(&ch->send_select_head,
+                                                       &ch->send_select_tail);
+        if (node) {
+            coco_coro_t *sel_coro = node->coro;
+            if (sel_coro && sel_coro->select_ready_index == -1) {
+                sel_coro->select_ready_index = node->case_index;
+                select_dequeue_all(sel_coro);
+                if (sel_coro->select_timer) {
+                    coco_timer_cancel(sel_coro->select_timer);
+                    sel_coro->select_timer = NULL;
+                }
+                enqueue_ready(sched, sel_coro);
+            }
+        }
+    }
+}
+
+/**
+ * coco_channel_select - Go 风格的 channel select
+ *
+ * @param cases   select case 数组
+ * @param ncases  case 数量
+ * @param timeout_ms 超时时间（0 = 无超时）
+ * @param has_default 是否有 default case
+ * @return 就绪 case 的索引，COCO_SELECT_TIMEOUT，或 COCO_SELECT_DEFAULT
+ */
+int coco_channel_select(coco_select_case_t *cases, int ncases,
+                        uint64_t timeout_ms, int has_default) {
+    if (!cases || ncases <= 0) {
+        return COCO_ERROR_INVALID;
+    }
+
+    coco_sched_t *sched = g_current_sched;
+    coco_coro_t *coro = g_current_coro;
+    if (!sched || !coro) {
+        return COCO_ERROR;
+    }
+
+    /* Phase 1: Lock-free check — scan for immediately ready operations */
+    for (int i = 0; i < ncases; i++) {
+        coco_channel_t *ch = cases[i].chan;
+        if (!ch) continue;
+
+        if (cases[i].dir == COCO_SELECT_RECV) {
+            /* RECV: channel has data in buffer OR has a waiting sender */
+            if ((ch->capacity > 0 && ch->count > 0) ||
+                ch->send_wait_head || ch->send_select_head) {
+                cases[i].result = coco_channel_recv(ch, (void **)cases[i].val);
+                return i;
+            }
+        } else {
+            /* SEND: channel has buffer space OR has a waiting receiver */
+            if (ch->closed) {
+                cases[i].result = COCO_ERROR_CHANNEL_CLOSED;
+                return i;
+            }
+            if (ch->recv_wait_head || ch->recv_select_head ||
+                (ch->capacity > 0 && ch->count < ch->capacity)) {
+                cases[i].result = coco_channel_send(ch, cases[i].val);
+                return i;
+            }
+        }
+    }
+
+    /* Default case: return immediately if no case is ready */
+    if (has_default) {
+        return COCO_SELECT_DEFAULT;
+    }
+
+    /* Phase 2: Register — no case ready, block */
+    coco_select_node_t *nodes = malloc(sizeof(coco_select_node_t) * ncases);
+    if (!nodes) {
+        return COCO_ERROR_NOMEM;
+    }
+
+    /* Mutual exclusion: select_nodes and wait_node.in_use cannot both be active */
+    if (coro->wait_node.in_use) {
+        free(nodes);
+        return COCO_ERROR;
+    }
+
+    for (int i = 0; i < ncases; i++) {
+        coco_channel_t *ch = cases[i].chan;
+        nodes[i].chan = ch;
+        nodes[i].coro = coro;
+        nodes[i].case_index = i;
+        nodes[i].is_send = (cases[i].dir == COCO_SELECT_SEND);
+        if (nodes[i].is_send) {
+            nodes[i].send_val = cases[i].val;
+        } else {
+            nodes[i].recv_ptr = (void **)cases[i].val;
+        }
+        nodes[i].registered = 0;
+        nodes[i].next = NULL;
+
+        if (!ch) continue;
+
+        /* Register on channel's select wait queue */
+        if (nodes[i].is_send) {
+            if (ch->closed) {
+                /* Channel closed during registration — cleanup and return */
+                for (int j = 0; j < i; j++) {
+                    if (nodes[j].registered && nodes[j].chan) {
+                        coco_channel_t *jch = nodes[j].chan;
+                        if (nodes[j].is_send) {
+                            remove_select_node(&jch->send_select_head,
+                                               &jch->send_select_tail, &nodes[j]);
+                        } else {
+                            remove_select_node(&jch->recv_select_head,
+                                               &jch->recv_select_tail, &nodes[j]);
+                        }
+                    }
+                }
+                cases[i].result = COCO_ERROR_CHANNEL_CLOSED;
+                free(nodes);
+                return i;
+            }
+            enqueue_select_node(&ch->send_select_head, &ch->send_select_tail, &nodes[i]);
+        } else {
+            enqueue_select_node(&ch->recv_select_head, &ch->recv_select_tail, &nodes[i]);
+        }
+    }
+
+    coro->select_nodes = nodes;
+    coro->select_case_count = ncases;
+    coro->select_ready_index = -1;
+    coro->select_timer = NULL;
+
+    /* Register timeout if requested */
+    if (timeout_ms > 0) {
+        coro->select_timer = coco_timer_ex(sched, timeout_ms, select_timeout_cb, coro);
+    }
+
+    coro->state = COCO_STATE_WAITING;
+    coco_yield();
+
+    /* Phase 4: Resume — check what woke us */
+    int ready_index = coro->select_ready_index;
+
+    /* Cancel timer if still active */
+    if (coro->select_timer) {
+        coco_timer_cancel(coro->select_timer);
+        coro->select_timer = NULL;
+    }
+
+    if (ready_index >= 0) {
+        /* A specific case is ready — execute the operation */
+        coco_select_node_t *node = &nodes[ready_index];
+        coco_channel_t *ch = node->chan;
+        if (node->is_send) {
+            /* Value was transferred during wakeup or buffered */
+            cases[ready_index].result = ch->closed ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
+        } else {
+            *node->recv_ptr = coro->wait_node.value;
+            cases[ready_index].result = (coro->wait_node.value == NULL && ch->closed)
+                                        ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
+        }
+    }
+    /* COCO_SELECT_TIMEOUT: already dequeued by timeout callback */
+
+    /* Free select nodes */
+    coro->select_nodes = NULL;
+    coro->select_case_count = 0;
+    coro->select_ready_index = -1;
+    free(nodes);
+
+    return ready_index;
 }
 
 /**
@@ -264,7 +608,7 @@ void coco_channel_destroy(coco_channel_t *ch) {
         free(ch->buffer);
     }
 
-    /* 清理等待队列，设置 freed_by_destroy 标志 */
+    /* 清理普通等待队列，设置 freed_by_destroy 标志 */
     while (ch->send_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (coro) {
@@ -275,6 +619,30 @@ void coco_channel_destroy(coco_channel_t *ch) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (coro) {
             coro->wait_node.freed_by_destroy = true;
+        }
+    }
+
+    /* 清理 select 等待队列 */
+    while (ch->send_select_head) {
+        coco_select_node_t *node = dequeue_select_node(&ch->send_select_head,
+                                                       &ch->send_select_tail);
+        if (node && node->coro) {
+            coco_coro_t *sel_coro = node->coro;
+            if (sel_coro->select_ready_index == -1) {
+                sel_coro->select_ready_index = node->case_index;
+            }
+            /* Note: remaining nodes in this select will be cleaned up
+             * when the coro resumes and processes its select state */
+        }
+    }
+    while (ch->recv_select_head) {
+        coco_select_node_t *node = dequeue_select_node(&ch->recv_select_head,
+                                                       &ch->recv_select_tail);
+        if (node && node->coro) {
+            coco_coro_t *sel_coro = node->coro;
+            if (sel_coro->select_ready_index == -1) {
+                sel_coro->select_ready_index = node->case_index;
+            }
         }
     }
 

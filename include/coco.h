@@ -511,6 +511,46 @@ void coco_channel_close(coco_channel_t *ch);
 void coco_channel_destroy(coco_channel_t *ch);
 /** @} */
 
+/* === Channel Select API === */
+/** @defgroup ChannelSelect Channel Select API
+ *  @brief Go-style select over multiple channel operations
+ *  @{
+ */
+
+/** Select case direction */
+enum coco_select_dir {
+    COCO_SELECT_SEND,    /**< Send case */
+    COCO_SELECT_RECV     /**< Receive case */
+};
+
+/** Select case descriptor */
+typedef struct coco_select_case {
+    coco_channel_t *chan;        /**< Channel */
+    enum coco_select_dir dir;    /**< Direction: send or recv */
+    void *val;                   /**< Send value or recv output pointer */
+    int result;                  /**< Result: COCO_OK or error */
+} coco_select_case_t;
+
+/** Select return values */
+#define COCO_SELECT_TIMEOUT  (-2)  /**< Timeout expired */
+#define COCO_SELECT_DEFAULT  (-3)  /**< Default case taken */
+
+/**
+ * @brief Select over multiple channel operations (Go-style)
+ * @param cases Array of select cases
+ * @param ncases Number of cases
+ * @param timeout_ms Timeout in milliseconds (0 = no timeout)
+ * @param has_default Whether to include a default case
+ * @return Index of ready case, COCO_SELECT_TIMEOUT, or COCO_SELECT_DEFAULT
+ *
+ * Blocks until one case is ready, timeout expires, or default is taken.
+ * When multiple cases are ready, one is chosen (first-ready scan).
+ */
+int coco_channel_select(coco_select_case_t *cases, int ncases,
+                        uint64_t timeout_ms, int has_default);
+
+/** @} */
+
 /* === I/O API === */
 /** @defgroup IO I/O API
  *  @brief Non-blocking I/O operations for coroutines

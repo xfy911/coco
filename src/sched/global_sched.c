@@ -294,11 +294,19 @@ static void *worker_loop(void *arg) {
     coco_processor_t *p = (coco_processor_t *)arg;
     coco_global_sched_t *gs = coco_global_get();
 
+    /* Thread-local state for worker threads */
+    extern _Thread_local coco_coro_t *g_current_coro;
+
+    /* Set return context for this worker thread */
+    g_return_ctx = &p->m->ctx;
+
     while (atomic_load(&gs->running)) {
         coco_coro_t *coro = get_next_runnable(p);
         if (coro) {
             atomic_store(&p->curcoro, coro);
+            g_current_coro = coro;
             coco_ctx_switch(&p->m->ctx, &coro->ctx);
+            g_current_coro = NULL;
             atomic_store(&p->curcoro, NULL);
 
             /* Handle coroutine state after switch back */
