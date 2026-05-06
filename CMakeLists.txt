@@ -139,6 +139,11 @@ if(PLATFORM STREQUAL "linux" AND LIBURING)
     target_link_libraries(coco ${LIBURING})
 endif()
 
+# Windows: 链接 ws2_32 (Winsock2)
+if(WIN32)
+    target_link_libraries(coco PRIVATE ws2_32)
+endif()
+
 # 测试
 option(COCO_BUILD_TESTS "Build tests" ON)
 if(COCO_BUILD_TESTS)
@@ -186,6 +191,7 @@ if(COCO_BUILD_TESTS)
         test_frame_walker
         test_global_sched_mt
         test_stack_shrink
+        test_channel_select
     )
 
     # 平台特定测试
