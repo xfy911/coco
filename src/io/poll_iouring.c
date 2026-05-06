@@ -883,14 +883,14 @@ int coco_iouring_submit_batch(coco_sched_t *sched) {
  */
 void coco_iouring_get_stats_internal(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
     if (!sched || !sched->iouring) {
-        *submit_count = 0;
-        *syscall_count = 0;
+        if (submit_count) *submit_count = 0;
+        if (syscall_count) *syscall_count = 0;
         return;
     }
 
     coco_iouring_t *iou = sched->iouring;
-    *submit_count = iou->submit_count;
-    *syscall_count = iou->syscall_count;
+    if (submit_count) *submit_count = iou->submit_count;
+    if (syscall_count) *syscall_count = iou->syscall_count;
 }
 
 #else /* !__linux__ */
