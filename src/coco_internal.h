@@ -192,12 +192,14 @@ typedef struct fd_table {
 typedef enum {
     COCO_POLL_EPOLL,      /* Linux epoll */
     COCO_POLL_KQUEUE,     /* macOS kqueue */
-    COCO_POLL_IOURING     /* Linux io_uring */
+    COCO_POLL_IOURING,    /* Linux io_uring */
+    COCO_POLL_WSAPOLL     /* Windows WSAPoll */
 } coco_poll_backend_t;
 
 /* I/O 配置常量 */
 #define COCO_EPOLL_MAX_EVENTS  256   /* epoll_wait 最大事件数 */
 #define COCO_KQUEUE_MAX_EVENTS 256   /* kevent 最大事件数 */
+#define COCO_WSAPOLL_MAX_EVENTS 256  /* WSAPoll 最大事件数 */
 
 /* 强制后端选择标志 */
 typedef struct {
@@ -295,6 +297,8 @@ void coco_poll_cleanup(coco_sched_t *sched);
 int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short events);
 void coco_poll_unregister(coco_sched_t *sched, int fd);
 int coco_poll_wait(coco_sched_t *sched, int timeout_ms);
+void coco_poll_set_nonblock(int fd);
+void coco_poll_wait_ready(int fd, short events);
 
 /* io_uring API (Linux 5.1+) */
 int coco_poll_init_iouring(coco_sched_t *sched);
