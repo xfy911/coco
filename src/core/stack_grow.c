@@ -17,9 +17,7 @@
 #include <sys/mman.h>
 
 /* Platform-specific headers */
-#if defined(__linux__)
-#include <linux/signal.h>
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
 #include <mach/mach.h>
 #endif
 

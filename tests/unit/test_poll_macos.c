@@ -321,7 +321,7 @@ void test_read_write_basic(void) {
 void accept_coro_func(void *arg) {
     (void)arg;
     struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
+    size_t client_len = sizeof(client_addr);
     int client_fd = coco_accept(g_accept_listen_fd, &client_addr, &client_len);
     g_accept_result_fd = client_fd;
 }

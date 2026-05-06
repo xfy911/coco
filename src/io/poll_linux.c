@@ -7,15 +7,28 @@
 
 #include "../coco_internal.h"
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <stdio.h>
 #include <sys/utsname.h>
 
 /* 外部全局变量（TLS） */
 extern _Thread_local coco_sched_t *g_current_sched;
 extern _Thread_local coco_coro_t *g_current_coro;
+
+/* io_uring 后端内部函数声明 */
+#ifdef __linux__
+extern coco_batch_io_t *coco_batch_begin_iouring(coco_sched_t *sched);
+extern int coco_batch_add_read_iouring(coco_batch_io_t *batch, int fd, void *buf, size_t count);
+extern int coco_batch_add_write_iouring(coco_batch_io_t *batch, int fd, const void *buf, size_t count);
+extern int coco_batch_submit_iouring(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results);
+extern int coco_batch_cancel_iouring(coco_batch_io_t *batch);
+extern void coco_batch_end_iouring(coco_batch_io_t *batch);
+extern void coco_iouring_get_stats_internal(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count);
+#endif
 
 /* 检测内核版本 */
 static bool kernel_version_at_least(int major, int minor) {
@@ -418,35 +431,62 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
     return COCO_ERROR;
 }
 
-/* === 批量 I/O API (epoll 不支持) === */
+/* === 批量 I/O API === */
 
 coco_batch_io_t *coco_batch_begin(coco_sched_t *sched) {
-    (void)sched;
+    if (!sched) return NULL;
+#ifdef __linux__
+    if (sched->iouring) {
+        return coco_batch_begin_iouring(sched);
+    }
+#endif
     return NULL;  /* epoll 不支持批量 I/O */
 }
 
 int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count) {
-    (void)batch; (void)fd; (void)buf; (void)count;
+    if (!batch) return COCO_ERROR;
+#ifdef __linux__
+    return coco_batch_add_read_iouring(batch, fd, buf, count);
+#else
+    (void)fd; (void)buf; (void)count;
     return COCO_ERROR;
+#endif
 }
 
 int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count) {
-    (void)batch; (void)fd; (void)buf; (void)count;
+    if (!batch) return COCO_ERROR;
+#ifdef __linux__
+    return coco_batch_add_write_iouring(batch, fd, buf, count);
+#else
+    (void)fd; (void)buf; (void)count;
     return COCO_ERROR;
+#endif
 }
 
 int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results) {
-    (void)batch; (void)results; (void)max_results;
+    if (!batch) return COCO_ERROR;
+#ifdef __linux__
+    return coco_batch_submit_iouring(batch, results, max_results);
+#else
+    (void)results; (void)max_results;
     return COCO_ERROR;
+#endif
 }
 
 int coco_batch_cancel(coco_batch_io_t *batch) {
-    (void)batch;
+    if (!batch) return COCO_ERROR;
+#ifdef __linux__
+    return coco_batch_cancel_iouring(batch);
+#else
     return COCO_ERROR;
+#endif
 }
 
 void coco_batch_end(coco_batch_io_t *batch) {
-    (void)batch;
+    if (!batch) return;
+#ifdef __linux__
+    coco_batch_end_iouring(batch);
+#endif
 }
 
 /* === I/O 配置 API === */
@@ -486,7 +526,17 @@ int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
 }
 
 void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
-    (void)sched;
+    if (!sched) {
+        if (submit_count) *submit_count = 0;
+        if (syscall_count) *syscall_count = 0;
+        return;
+    }
+#ifdef __linux__
+    if (sched->iouring) {
+        coco_iouring_get_stats_internal(sched, submit_count, syscall_count);
+        return;
+    }
+#endif
     if (submit_count) *submit_count = 0;
     if (syscall_count) *syscall_count = 0;
 }

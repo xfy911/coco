@@ -14,8 +14,15 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
+
+/* 外部全局变量（TLS） */
+extern _Thread_local coco_sched_t *g_current_sched;
+extern _Thread_local coco_coro_t *g_current_coro;
 
 /* io_uring 配置 */
 #define IOURING_ENTRIES     256   /* 默认队列深度 */
@@ -28,44 +35,6 @@ static const coco_io_options_t g_default_io_options = {
     .sqpoll_cpu = -1,
     .sqpoll_idle_ms = IOURING_SQPOLL_IDLE
 };
-
-/* === I/O 配置 API === */
-
-/**
- * coco_sched_set_io_options - 设置 I/O 配置
- */
-int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options) {
-    if (!sched || !options) {
-        return COCO_ERROR;
-    }
-
-    /* 必须在调度器初始化之前调用 */
-    if (sched->poll_fd >= 0 || sched->iouring) {
-        return COCO_ERROR;  /* 已初始化，无法更改 */
-    }
-
-    sched->io_options = *options;
-    sched->io_options_set = true;
-
-    return COCO_OK;
-}
-
-/**
- * coco_sched_get_io_options - 获取当前 I/O 配置
- */
-int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
-    if (!sched || !options) {
-        return COCO_ERROR;
-    }
-
-    if (sched->io_options_set) {
-        *options = sched->io_options;
-    } else {
-        *options = g_default_io_options;
-    }
-
-    return COCO_OK;
-}
 
 /* io_uring 请求类型 */
 typedef enum {
@@ -651,9 +620,9 @@ static coco_batch_io_t g_batch_pool[16];
 static int g_batch_pool_used = 0;
 
 /**
- * coco_batch_begin - 开始批量 I/O 上下文
+ * coco_batch_begin_iouring - 开始批量 I/O 上下文 (io_uring 后端)
  */
-coco_batch_io_t *coco_batch_begin(coco_sched_t *sched) {
+coco_batch_io_t *coco_batch_begin_iouring(coco_sched_t *sched) {
     if (!sched || !sched->iouring) {
         return NULL;  /* 仅 io_uring 支持 */
     }
@@ -684,9 +653,9 @@ coco_batch_io_t *coco_batch_begin(coco_sched_t *sched) {
 }
 
 /**
- * coco_batch_add_read - 添加读操作到批量上下文
+ * coco_batch_add_read_iouring - 添加读操作到批量上下文 (io_uring 后端)
  */
-int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count) {
+int coco_batch_add_read_iouring(coco_batch_io_t *batch, int fd, void *buf, size_t count) {
     if (!batch || batch->submitted || fd < 0 || !buf || count == 0) {
         return COCO_ERROR;
     }
@@ -707,9 +676,9 @@ int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count)
 }
 
 /**
- * coco_batch_add_write - 添加写操作到批量上下文
+ * coco_batch_add_write_iouring - 添加写操作到批量上下文 (io_uring 后端)
  */
-int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count) {
+int coco_batch_add_write_iouring(coco_batch_io_t *batch, int fd, const void *buf, size_t count) {
     if (!batch || batch->submitted || fd < 0 || !buf || count == 0) {
         return COCO_ERROR;
     }
@@ -730,9 +699,9 @@ int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t
 }
 
 /**
- * coco_batch_submit - 提交批量 I/O 并等待完成
+ * coco_batch_submit_iouring - 提交批量 I/O 并等待完成 (io_uring 后端)
  */
-int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results) {
+int coco_batch_submit_iouring(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results) {
     if (!batch || batch->submitted || batch->op_count == 0) {
         return COCO_ERROR;
     }
@@ -849,9 +818,9 @@ int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size
 }
 
 /**
- * coco_batch_cancel - 取消批量 I/O
+ * coco_batch_cancel_iouring - 取消批量 I/O (io_uring 后端)
  */
-int coco_batch_cancel(coco_batch_io_t *batch) {
+int coco_batch_cancel_iouring(coco_batch_io_t *batch) {
     if (!batch || batch->submitted) {
         return COCO_ERROR;
     }
@@ -863,14 +832,14 @@ int coco_batch_cancel(coco_batch_io_t *batch) {
 }
 
 /**
- * coco_batch_end - 结束批量上下文
+ * coco_batch_end_iouring - 结束批量上下文 (io_uring 后端)
  */
-void coco_batch_end(coco_batch_io_t *batch) {
+void coco_batch_end_iouring(coco_batch_io_t *batch) {
     if (!batch) return;
 
     /* 如果未提交，取消所有操作 */
     if (!batch->submitted) {
-        coco_batch_cancel(batch);
+        coco_batch_cancel_iouring(batch);
     }
 
     /* 归还到池 */
@@ -910,9 +879,9 @@ int coco_iouring_submit_batch(coco_sched_t *sched) {
 }
 
 /**
- * coco_iouring_get_stats - 获取 io_uring 统计信息
+ * coco_iouring_get_stats_internal - 获取 io_uring 统计信息 (内部函数)
  */
-void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
+void coco_iouring_get_stats_internal(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
     if (!sched || !sched->iouring) {
         *submit_count = 0;
         *syscall_count = 0;
