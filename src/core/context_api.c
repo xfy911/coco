@@ -31,6 +31,14 @@ static void init_background(void) {
         atomic_store(&global_background->cancelled, false);
         atomic_store(&global_background->done, false);
         pthread_mutex_init(&global_background->children_lock, NULL);
+
+        /* Initialize children array (same as coco_context_create) */
+        global_background->children_capacity = 4;
+        global_background->children = malloc(global_background->children_capacity * sizeof(coco_context_t*));
+        if (!global_background->children) {
+            /* If allocation fails, reset to safe state */
+            global_background->children_capacity = 0;
+        }
     }
 }
 
@@ -359,6 +367,14 @@ static void init_todo(void) {
         atomic_store(&todo_ctx->cancelled, false);
         atomic_store(&todo_ctx->done, false);
         pthread_mutex_init(&todo_ctx->children_lock, NULL);
+
+        /* Initialize children array (same as coco_context_create) */
+        todo_ctx->children_capacity = 4;
+        todo_ctx->children = malloc(todo_ctx->children_capacity * sizeof(coco_context_t*));
+        if (!todo_ctx->children) {
+            /* If allocation fails, reset to safe state */
+            todo_ctx->children_capacity = 0;
+        }
     }
 }
 
