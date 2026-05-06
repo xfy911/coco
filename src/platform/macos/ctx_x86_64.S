@@ -1,5 +1,16 @@
 /**
- * ctx_x86_64.S - macOS x86-64 上下文切换汇编 (System V ABI)
+ * ctx_x86_64.S - macOS x86-64 上下文切换汇编
+ *
+ * 调用约定: System V AMD64 ABI
+ * Callee-saved: rbx, rbp, r12-r15
+ *
+ * coco_ctx_t 结构布局 (Unix x86-64):
+ *   offset 0-48:   sp, fp, rbx, r12-r15
+ *   offset 56-64:  stack_base, stack_limit (C 管理，汇编不保存)
+ *
+ * 性能目标: < 100ns
+ *
+ * 注意: macOS 符号名需要下划线前缀，使用 Intel 语法
  */
 
 .global _coco_ctx_save

@@ -1,19 +1,14 @@
 /**
- * ctx_x86_64.S - Linux x86-64 上下文切换汇编 (System V ABI)
+ * ctx_x86_64.S - Linux x86-64 上下文切换汇编
  *
- * coco_ctx_t 结构布局:
- *   offset 0:  sp   (栈指针)
- *   offset 8:  rbp  (基址指针)
- *   offset 16: rbx  (callee-saved)
- *   offset 24: r12
- *   offset 32: r13
- *   offset 40: r14
- *   offset 48: r15
- *   offset 56: (padding for alignment)
+ * 调用约定: System V AMD64 ABI
+ * Callee-saved: rbx, rbp, r12-r15
  *
- * 寄存器保存策略 (System V ABI):
- *   Callee-saved: rbx, rbp, r12-r15
- *   Caller-saved: rax, rcx, rdx, rsi, rdi, r8-r11 (不需要保存)
+ * coco_ctx_t 结构布局 (Unix x86-64):
+ *   offset 0-48:   sp, fp, rbx, r12-r15
+ *   offset 56-64:  stack_base, stack_limit (C 管理，汇编不保存)
+ *
+ * 性能目标: < 100ns
  */
 
 .global coco_ctx_save
