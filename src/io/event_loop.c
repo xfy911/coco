@@ -62,17 +62,17 @@ int coco_read(int fd, void *buf, size_t count) {
 
         ssize_t n = read(fd, buf, count);
 
-        if (n >= 0) {
-            return (int)n;
-        }
-
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            /* 注册读事件并等待 */
-            coco_poll_register(sched, fd, coro, POLLIN);
-            coco_yield();
-            coco_poll_unregister(sched, fd);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* 注册读事件并等待 */
+                coco_poll_register(sched, fd, coro, POLLIN);
+                coco_yield();
+                coco_poll_unregister(sched, fd);
+            } else {
+                return COCO_ERROR;
+            }
         } else {
-            return COCO_ERROR;
+            return (int)n;
         }
     }
 }
@@ -105,20 +105,17 @@ int coco_write(int fd, const void *buf, size_t count) {
 
         ssize_t n = write(fd, buf + written, count - written);
 
-        if (n >= 0) {
-            written += n;
-            if (written >= count) {
-                return (int)written;
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* 注册写事件并等待 */
+                coco_poll_register(sched, fd, coro, POLLOUT);
+                coco_yield();
+                coco_poll_unregister(sched, fd);
+            } else {
+                return COCO_ERROR;
             }
-        }
-
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            /* 注册写事件并等待 */
-            coco_poll_register(sched, fd, coro, POLLOUT);
-            coco_yield();
-            coco_poll_unregister(sched, fd);
         } else {
-            return COCO_ERROR;
+            written += n;
         }
     }
 
