@@ -6,10 +6,17 @@
 
 #include "coro_go.h"
 #include "../sched/global_sched.h"
+#include "../sched/runq.h"
+#include "../core/stack_pool_multi.h"
 #include <stdlib.h>
+#include <stdatomic.h>
 
 /* 外部声明 - 在 coro.c 中定义 */
 extern _Thread_local coco_sched_t *g_current_sched;
+extern void coro_entry_wrapper(void *arg);
+
+/* 外部声明 - 在 safety.c 中定义 */
+extern coco_safety_mode_t g_safety_mode;
 
 /* 选择最佳 P */
 static int select_best_p(void) {
@@ -88,8 +95,52 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
         }
 
         /* 在指定 P 上创建协程 */
-        /* TODO: 实现多线程调度器的协程创建 */
-        /* 目前回退到单线程调度器 */
+        /* Multi-threaded: create coroutine on target P */
+        void *stack_top = stack_pool_multi_alloc((stack_pool_multi_t *)p->stack_pool, stack_size);
+        if (!stack_top) {
+            return NULL;
+        }
+
+        coco_coro_t *coro = calloc(1, sizeof(coco_coro_t));
+        if (!coro) {
+            stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool, stack_top, stack_size);
+            return NULL;
+        }
+
+        /* Initialize coroutine fields (mirroring coco_create) */
+        coro->stack_top = stack_top;
+        coro->stack_base = (void *)((uintptr_t)stack_top - stack_size - 4096);
+        coro->stack_size = stack_size;
+        coro->entry = entry;
+        coro->arg = arg;
+        coro->id = atomic_fetch_add(&gs->next_coro_id, 1);
+        coro->state = COCO_STATE_READY;
+        coro->priority = (coco_priority_t)priority;
+        coro->wait_fd = -1;
+        coro->safety_mode = g_safety_mode;
+
+        /* Initialize context (uses coro_entry_wrapper like coco_create) */
+        coco_ctx_init(&coro->ctx, coro->stack_top, coro_entry_wrapper, arg);
+
+        /* Add to P's local queue, overflow to global queue */
+        if (runq_put(p, coro) != 0) {
+            coco_global_runq_put(coro);
+        }
+
+        /* Wake idle workers */
+        pthread_mutex_lock(&gs->idle_lock);
+        pthread_cond_signal(&gs->idle_cond);
+        pthread_mutex_unlock(&gs->idle_lock);
+
+        /* Increment active coroutine count */
+        atomic_fetch_add(&gs->active_coroutines, 1);
+
+        /* Set context if provided */
+        if (opts && opts->context) {
+            coro->context = opts->context;
+        }
+
+        return coro;
     }
 
     /* 单线程调度器 */
