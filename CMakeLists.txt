@@ -64,6 +64,7 @@ set(PLATFORM_SOURCES
     src/platform/coco_thread.c
     src/platform/coco_mutex.c
     src/platform/coco_cond.c
+    src/platform/abi_detect.c
 )
 
 set(TIMER_SOURCES
@@ -103,6 +104,13 @@ elseif(PLATFORM STREQUAL "macos")
         list(APPEND PLATFORM_ASM src/platform/macos/ctx_x86_64.S)
     elseif(ARCH STREQUAL "arm64")
         list(APPEND PLATFORM_ASM src/platform/macos/ctx_arm64.S)
+    elseif(ARCH STREQUAL "universal")
+        # macOS Universal Binary 支持
+        set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64")
+        list(APPEND PLATFORM_ASM
+            src/platform/macos/ctx_x86_64.S
+            src/platform/macos/ctx_arm64.S
+        )
     endif()
 elseif(PLATFORM STREQUAL "windows")
     list(APPEND IO_SOURCES src/io/poll_windows.c)
