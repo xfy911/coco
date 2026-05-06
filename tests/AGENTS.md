@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-28 | Updated: 2026-04-28 -->
+<!-- Generated: 2026-04-28 | Updated: 2026-05-06 -->
 
 # tests
 
@@ -15,6 +15,7 @@ Unit tests and benchmarks for the coco coroutine library. Validates correctness 
 | Directory | Purpose |
 |-----------|---------|
 | `unit/` | Unit tests for each module (see `unit/AGENTS.md`) |
+| `integration/` | Integration tests for multi-module interactions (see `integration/AGENTS.md`) |
 | `benchmark/` | Performance benchmarks (see `benchmark/AGENTS.md`) |
 
 ## For AI Agents

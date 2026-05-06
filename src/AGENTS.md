@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-28 | Updated: 2026-04-28 -->
+<!-- Generated: 2026-04-28 | Updated: 2026-05-06 -->
 
 # src
 
@@ -15,6 +15,7 @@ Core implementation of the coco coroutine library. Contains the scheduler, corou
 | Directory | Purpose |
 |-----------|---------|
 | `core/` | Coroutine lifecycle, scheduler, context switching, stack management, signal handling (see `core/AGENTS.md`) |
+| `sched/` | M:N work-stealing scheduler for multi-threaded execution (see `sched/AGENTS.md`) |
 | `channel/` | Go-style channel communication (see `channel/AGENTS.md`) |
 | `io/` | Async I/O event loop and platform-specific pollers (see `io/AGENTS.md`) |
 | `timer/` | Hierarchical timing wheel (see `timer/AGENTS.md`) |

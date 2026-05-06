@@ -1,4 +1,4 @@
-<!-- Generated: 2026-04-28 | Updated: 2026-04-28 -->
+<!-- Generated: 2026-04-28 | Updated: 2026-05-06 -->
 
 # coco
 
@@ -19,6 +19,8 @@ A production-grade, high-performance, cross-platform C coroutine library. Provid
 | `src/` | Library implementation (see `src/AGENTS.md`) |
 | `examples/` | Usage examples (see `examples/AGENTS.md`) |
 | `tests/` | Unit tests and benchmarks (see `tests/AGENTS.md`) |
+| `docs/` | Documentation (see `docs/AGENTS.md`) |
+| `tools/` | Build tools and utilities (see `tools/coco_stack_pass/AGENTS.md`) |
 
 ## For AI Agents
 
