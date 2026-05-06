@@ -5,6 +5,8 @@
  */
 
 #include "global_sched.h"
+#include "runq.h"
+#include <time.h>
 #include "../core/stack_pool_multi.h"
 #include <stdlib.h>
 #include <string.h>
@@ -144,6 +146,7 @@ int coco_global_init(uint32_t num_procs) {
     /* 初始化统计 */
     atomic_init(&g_global_sched->total_coroutines, 0);
     atomic_init(&g_global_sched->active_coroutines, 0);
+    atomic_init(&g_global_sched->next_coro_id, 0);
     atomic_init(&g_global_sched->running, false);
 
     return 0;
@@ -253,4 +256,155 @@ coco_processor_t *coco_processor_get(uint32_t id) {
         return NULL;
     }
     return g_global_sched->processors[id];
+}
+
+/* Get next runnable coroutine: local queue -> global queue -> work steal */
+static coco_coro_t *get_next_runnable(coco_processor_t *p) {
+    coco_coro_t *coro;
+
+    /* 1. Try local queue */
+    coro = runq_get(p);
+    if (coro) return coro;
+
+    /* 2. Try global queue */
+    coro = coco_global_runq_get();
+    if (coro) return coro;
+
+    /* 3. Try work stealing */
+    coco_global_sched_t *gs = coco_global_get();
+    if (!gs) return NULL;
+
+    uint32_t start = rand() % gs->processor_count;
+    for (uint32_t i = 0; i < gs->processor_count; i++) {
+        uint32_t target_id = (start + i) % gs->processor_count;
+        if (target_id == p->id) continue;
+
+        coco_processor_t *target = gs->processors[target_id];
+        if (!target) continue;
+
+        coro = runq_steal(target);
+        if (coro) return coro;
+    }
+
+    return NULL;
+}
+
+/* Worker thread loop */
+static void *worker_loop(void *arg) {
+    coco_processor_t *p = (coco_processor_t *)arg;
+    coco_global_sched_t *gs = coco_global_get();
+
+    while (atomic_load(&gs->running)) {
+        coco_coro_t *coro = get_next_runnable(p);
+        if (coro) {
+            atomic_store(&p->curcoro, coro);
+            coco_ctx_switch(&p->m->ctx, &coro->ctx);
+            atomic_store(&p->curcoro, NULL);
+
+            /* Handle coroutine state after switch back */
+            if (coro->state == COCO_STATE_DEAD) {
+                atomic_fetch_sub(&gs->active_coroutines, 1);
+            }
+        } else {
+            /* Idle wait */
+            pthread_mutex_lock(&gs->idle_lock);
+            if (!atomic_load(&gs->running)) {
+                pthread_mutex_unlock(&gs->idle_lock);
+                break;
+            }
+            pthread_cond_wait(&gs->idle_cond, &gs->idle_lock);
+            pthread_mutex_unlock(&gs->idle_lock);
+        }
+    }
+    return NULL;
+}
+
+int coco_global_sched_start(uint32_t num_workers) {
+    coco_global_sched_t *gs = coco_global_get();
+
+    if (!gs) {
+        /* Auto-initialize with num_workers processors */
+        if (coco_global_init(num_workers) != 0) {
+            return COCO_ERROR;
+        }
+        gs = coco_global_get();
+    }
+
+    if (atomic_load(&gs->running)) {
+        return COCO_ERROR_INVALID;  /* Already running */
+    }
+
+    atomic_store(&gs->running, true);
+    atomic_init(&gs->next_coro_id, 0);
+
+    /* Create M (worker threads) for each P */
+    for (uint32_t i = 0; i < gs->processor_count; i++) {
+        coco_processor_t *p = gs->processors[i];
+        coco_machine_t *m = coco_machine_create(i);
+        if (!m) {
+            atomic_store(&gs->running, false);
+            return COCO_ERROR_NOMEM;
+        }
+
+        /* Bind M to P */
+        p->m = m;
+        m->p = p;
+        atomic_store(&p->status, P_RUNNING);
+        atomic_store(&m->status, M_RUNNING);
+
+        /* Create worker thread */
+        if (pthread_create(&m->thread, NULL, worker_loop, p) != 0) {
+            coco_machine_destroy(m);
+            p->m = NULL;
+            atomic_store(&gs->running, false);
+            return COCO_ERROR;
+        }
+    }
+
+    return COCO_OK;
+}
+
+int coco_global_sched_wait(void) {
+    coco_global_sched_t *gs = coco_global_get();
+    if (!gs) return COCO_ERROR;
+
+    /* Wait until all coroutines complete */
+    while (atomic_load(&gs->active_coroutines) > 0 && atomic_load(&gs->running)) {
+        struct timespec ts = {0, 10000000};  /* 10ms */
+        nanosleep(&ts, NULL);
+    }
+
+    return COCO_OK;
+}
+
+int coco_global_sched_stop(void) {
+    coco_global_sched_t *gs = coco_global_get();
+    if (!gs) return COCO_ERROR;
+
+    atomic_store(&gs->running, false);
+
+    /* Wake up all idle workers */
+    pthread_mutex_lock(&gs->idle_lock);
+    pthread_cond_broadcast(&gs->idle_cond);
+    pthread_mutex_unlock(&gs->idle_lock);
+
+    /* Wait for worker threads to finish */
+    for (uint32_t i = 0; i < gs->processor_count; i++) {
+        coco_processor_t *p = gs->processors[i];
+        if (p && p->m && p->m->thread) {
+            pthread_join(p->m->thread, NULL);
+        }
+    }
+
+    /* Destroy M structures */
+    for (uint32_t i = 0; i < gs->processor_count; i++) {
+        coco_processor_t *p = gs->processors[i];
+        if (p && p->m) {
+            coco_machine_destroy(p->m);
+            p->m = NULL;
+            atomic_store(&p->status, P_IDLE);
+        }
+    }
+
+    return COCO_OK;
 }

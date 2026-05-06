@@ -637,6 +637,39 @@ int coco_cancel(coco_coro_t *coro);
 int coco_cancelled(void);
 /** @} */
 
+/* === Multi-threaded Scheduler API === */
+/** @defgroup MultiThreadedScheduler Multi-threaded Scheduler API
+ *  @brief Functions for multi-threaded coroutine scheduling
+ *  @{
+ */
+
+/**
+ * @brief Start the global scheduler with worker threads
+ * @param num_workers Number of worker threads (0 = auto-detect CPU count)
+ * @return COCO_OK on success, negative error code on failure
+ *
+ * Creates worker threads and binds them to processors.
+ * After calling this, coco_go() will dispatch coroutines to workers.
+ */
+int coco_global_sched_start(uint32_t num_workers);
+
+/**
+ * @brief Wait for all coroutines to complete
+ * @return COCO_OK on success, negative error code on failure
+ *
+ * Blocks until all active coroutines finish execution.
+ */
+int coco_global_sched_wait(void);
+
+/**
+ * @brief Stop the global scheduler and join worker threads
+ * @return COCO_OK on success, negative error code on failure
+ *
+ * Gracefully shuts down all worker threads.
+ */
+int coco_global_sched_stop(void);
+/** @} */
+
 #ifdef __cplusplus
 }
 #endif

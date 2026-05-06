@@ -41,6 +41,7 @@ typedef struct coco_global_sched {
     /* 统计信息 */
     _Atomic uint64_t total_coroutines;
     _Atomic uint64_t active_coroutines;
+    _Atomic uint64_t next_coro_id;
 
     /* 状态 */
     _Atomic bool running;
@@ -83,6 +84,8 @@ typedef struct coco_machine {
     /* 绑定的 P */
     struct coco_processor *p;
 
+    coco_ctx_t ctx;  /* Worker thread context for coroutine switching */
+
     /* 状态 */
     _Atomic enum {
         M_IDLE,
@@ -114,5 +117,10 @@ uint64_t coco_global_runq_size(void);
 /* 查询 */
 uint32_t coco_processor_count(void);
 coco_processor_t *coco_processor_get(uint32_t id);
+
+/* Multi-threaded scheduler API */
+int coco_global_sched_start(uint32_t num_workers);
+int coco_global_sched_wait(void);
+int coco_global_sched_stop(void);
 
 #endif /* GLOBAL_SCHED_H */
