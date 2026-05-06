@@ -11,32 +11,86 @@
 #include <stddef.h>
 
 /* 上下文结构 (与汇编对应，支持 x86-64 和 ARM64) */
+/* ARM64 上下文结构 - 包含浮点寄存器 */
+#if defined(__aarch64__) || defined(_M_ARM64)
 typedef struct coco_ctx {
-    void *sp;       /* offset 0: 栈指针 */
-    void *fp;       /* offset 8: 基址指针 (ARM64: x29, x86-64: rbp) */
-#if defined(__aarch64__)
-    void *lr;       /* offset 16: 链接寄存器 (ARM64: x30) */
-    void *x19;      /* offset 24: callee-saved */
-    void *x20;      /* offset 32 */
-    void *x21;      /* offset 40 */
-    void *x22;      /* offset 48 */
-    void *x23;      /* offset 56 */
-    void *x24;      /* offset 64 */
-    void *x25;      /* offset 72 */
-    void *x26;      /* offset 80 */
-    void *x27;      /* offset 88 */
-    void *x28;      /* offset 96 */
-#elif defined(__x86_64__)
-    void *rbx;      /* offset 16: callee-saved */
-    void *r12;      /* offset 24 */
-    void *r13;      /* offset 32 */
-    void *r14;      /* offset 40 */
-    void *r15;      /* offset 48 */
-#endif
-    /* Dynamic stack growth fields (added at end to preserve offsets) */
-    void *stack_base;   /* 协程栈基址 */
-    void *stack_limit;  /* 协程栈当前上限 */
+    void *sp;           /* offset 0: 栈指针 */
+    void *fp;           /* offset 8: 帧指针 (x29) */
+    void *lr;           /* offset 16: 链接寄存器 (x30) */
+    void *x19;          /* offset 24: callee-saved */
+    void *x20;          /* offset 32 */
+    void *x21;          /* offset 40 */
+    void *x22;          /* offset 48 */
+    void *x23;          /* offset 56 */
+    void *x24;          /* offset 64 */
+    void *x25;          /* offset 72 */
+    void *x26;          /* offset 80 */
+    void *x27;          /* offset 88 */
+    void *x28;          /* offset 96 */
+    double d8;          /* offset 104: 浮点 callee-saved (8字节对齐) */
+    double d9;          /* offset 112 */
+    double d10;         /* offset 120 */
+    double d11;         /* offset 128 */
+    double d12;         /* offset 136 */
+    double d13;         /* offset 144 */
+    double d14;         /* offset 152 */
+    double d15;         /* offset 160 */
+    /* 汇编不保存以下字段，由 C 代码管理 */
+    void *stack_base;   /* offset 168: 动态栈增长 (C 管理) */
+    void *stack_limit;  /* offset 176: 动态栈增长 (C 管理) */
 } coco_ctx_t;
+#define COCO_CTX_SIZE 184
+#define COCO_CTX_ASM_SIZE 168  /* 汇编保存的大小 */
+
+/* Windows x86-64 上下文结构 - 包含 XMM 寄存器 (16字节对齐) */
+#elif defined(_WIN32) && defined(__x86_64__)
+typedef struct coco_ctx {
+    void *sp;           /* offset 0: 栈指针 */
+    void *fp;           /* offset 8: 基址指针 */
+    void *rbx;          /* offset 16: callee-saved */
+    void *rsi;          /* offset 24: callee-saved (Windows) */
+    void *rdi;          /* offset 32: callee-saved (Windows) */
+    void *r12;          /* offset 40: callee-saved */
+    void *r13;          /* offset 48: callee-saved */
+    void *r14;          /* offset 56: callee-saved */
+    void *r15;          /* offset 64: callee-saved */
+    /* 8 字节填充，确保 XMM 16 字节对齐 */
+    uint64_t _pad0;     /* offset 72: 填充 */
+    /* XMM 寄存器从 offset 80 开始，16 字节对齐 */
+    uint64_t xmm6[2];   /* offset 80: callee-saved (Windows, 16字节) */
+    uint64_t xmm7[2];   /* offset 96 */
+    uint64_t xmm8[2];   /* offset 112 */
+    uint64_t xmm9[2];   /* offset 128 */
+    uint64_t xmm10[2];  /* offset 144 */
+    uint64_t xmm11[2];  /* offset 160 */
+    uint64_t xmm12[2];  /* offset 176 */
+    uint64_t xmm13[2];  /* offset 192 */
+    uint64_t xmm14[2];  /* offset 208 */
+    uint64_t xmm15[2];  /* offset 224 */
+    /* 汇编不保存以下字段，由 C 代码管理 */
+    void *stack_base;   /* offset 240: 动态栈增长 (C 管理) */
+    void *stack_limit;  /* offset 248: 动态栈增长 (C 管理) */
+} coco_ctx_t;
+#define COCO_CTX_SIZE 256
+#define COCO_CTX_ASM_SIZE 240  /* 汇编保存的大小 */
+
+/* Unix x86-64 上下文结构 */
+#elif defined(__x86_64__)
+typedef struct coco_ctx {
+    void *sp;           /* offset 0: 栈指针 */
+    void *fp;           /* offset 8: 基址指针 */
+    void *rbx;          /* offset 16: callee-saved */
+    void *r12;          /* offset 24: callee-saved */
+    void *r13;          /* offset 32: callee-saved */
+    void *r14;          /* offset 40: callee-saved */
+    void *r15;          /* offset 48: callee-saved */
+    /* 汇编不保存以下字段，由 C 代码管理 */
+    void *stack_base;   /* offset 56: 动态栈增长 (C 管理) */
+    void *stack_limit;  /* offset 64: 动态栈增长 (C 管理) */
+} coco_ctx_t;
+#define COCO_CTX_SIZE 72
+#define COCO_CTX_ASM_SIZE 56  /* 汇编保存的大小 */
+#endif
 
 /* 协程结构 */
 struct coco_coro {

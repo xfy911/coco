@@ -26,9 +26,9 @@
  *   +-------------------+
  */
 void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void *arg) {
-    /* 预留空间: 16B padding + lr + x0 + fp + 10 callee-saved */
+    /* 预留空间: 16B padding + lr + x0 + fp + 10 callee-saved + 8 浮点寄存器 */
     uintptr_t sp = (uintptr_t)stack_top;
-    sp -= 112;  /* 预留 112 字节 (14 个 64-bit 值) */
+    sp -= 176;  /* 预留 176 字节 (22 个 64-bit 值，含 d8-d15) */
     sp &= ~0xF;  /* 16 字节对齐 */
 
     uint64_t *p = (uint64_t*)sp;
@@ -53,6 +53,16 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
     ctx->x27 = 0;
     ctx->x28 = 0;
 
+    /* 浮点寄存器初始化 */
+    ctx->d8 = 0.0;
+    ctx->d9 = 0.0;
+    ctx->d10 = 0.0;
+    ctx->d11 = 0.0;
+    ctx->d12 = 0.0;
+    ctx->d13 = 0.0;
+    ctx->d14 = 0.0;
+    ctx->d15 = 0.0;
+
     /* 动态栈增长字段初始化 */
     ctx->stack_base = NULL;
     ctx->stack_limit = NULL;
@@ -68,7 +78,7 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
  *
  * 栈帧布局 (从低地址向上):
  *   p[0] = trampoline  (返回地址，ret 弹出后跳转)
- *   p[1] = arg         (参数，trampoline 会放入 rdi)
+ *   p[1] = arg         (参数，trampoline 会放入 rdi/rcx)
  *   p[2] = entry       (函数地址，trampoline 会跳转)
  */
 void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void *arg) {
@@ -93,6 +103,24 @@ void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void 
     ctx->r13 = 0;
     ctx->r14 = 0;
     ctx->r15 = 0;
+
+#if defined(_WIN32)
+    /* Windows 特有字段初始化 */
+    ctx->rsi = 0;
+    ctx->rdi = 0;
+    ctx->_pad0 = 0;
+    /* XMM 寄存器初始化为 0 */
+    ctx->xmm6[0] = 0; ctx->xmm6[1] = 0;
+    ctx->xmm7[0] = 0; ctx->xmm7[1] = 0;
+    ctx->xmm8[0] = 0; ctx->xmm8[1] = 0;
+    ctx->xmm9[0] = 0; ctx->xmm9[1] = 0;
+    ctx->xmm10[0] = 0; ctx->xmm10[1] = 0;
+    ctx->xmm11[0] = 0; ctx->xmm11[1] = 0;
+    ctx->xmm12[0] = 0; ctx->xmm12[1] = 0;
+    ctx->xmm13[0] = 0; ctx->xmm13[1] = 0;
+    ctx->xmm14[0] = 0; ctx->xmm14[1] = 0;
+    ctx->xmm15[0] = 0; ctx->xmm15[1] = 0;
+#endif
 
     /* 动态栈增长字段初始化 */
     ctx->stack_base = NULL;
