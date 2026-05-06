@@ -506,6 +506,9 @@ void coco_destroy(coco_coro_t *coro) {
         return;
     }
 
+    /* Cleanup select state if coroutine is destroyed while in select */
+    coco_select_cleanup(coro);
+
     if (coro->stack_base) {
         coco_sched_t *sched = g_current_sched;
         if (sched && sched->stack_pool) {

@@ -317,4 +317,7 @@ coco_coro_t *fd_table_get(fd_table_t *ft, int fd);
 int fd_table_set(fd_table_t *ft, int fd, coco_coro_t *coro);
 void fd_table_clear(fd_table_t *ft, int fd);
 
+/* Channel select cleanup (for coco_destroy) */
+void coco_select_cleanup(coco_coro_t *coro);
+
 #endif /* COCO_INTERNAL_H */
