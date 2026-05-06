@@ -7,10 +7,13 @@
  */
 
 #include "../coco_internal.h"
-#include <sys/socket.h>
-#include <unistd.h>
 #include <errno.h>
+#include <unistd.h>
+
+#ifndef _WIN32
+#include <sys/socket.h>
 #include <poll.h>
+#endif
 
 /* 外部全局变量（TLS） */
 extern _Thread_local coco_sched_t *g_current_sched;
