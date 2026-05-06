@@ -18,13 +18,22 @@ Coco uses a **single-threaded cooperative model**. All coroutines run within one
 
 ## Platform Support
 
-| Platform | Architecture | I/O Backend | Status |
-|----------|-------------|-------------|--------|
-| Linux | x86-64 | epoll | Supported |
-| Linux | ARM64 | epoll | Supported |
-| macOS | x86-64 | kqueue | Supported |
-| macOS | ARM64 (Apple Silicon) | kqueue | Supported |
-| Windows | x86-64 | WSAPoll | Stub |
+| Platform | Architecture | ABI | I/O Backend | Status |
+|----------|-------------|-----|-------------|--------|
+| Linux | x86-64 | System V AMD64 | epoll | Supported |
+| Linux | ARM64 | AAPCS64 | epoll | Supported |
+| macOS | x86-64 | System V AMD64 | kqueue | Supported |
+| macOS | ARM64 (Apple Silicon) | AAPCS64 | kqueue | Supported |
+| Windows | x86-64 | Microsoft x64 | WSAPoll | Supported |
+| Windows | ARM64 | AAPCS64 | WSAPoll | Supported |
+
+### ABI Compliance
+
+All platform implementations follow their respective calling conventions:
+
+- **System V AMD64** (Linux/macOS x86-64): Saves rbx, rbp, r12-r15
+- **Microsoft x64** (Windows x86-64): Saves rbx, rbp, rsi, rdi, r12-r15, xmm6-xmm15
+- **AAPCS64** (ARM64): Saves x19-x28, fp, lr, d8-d15
 
 ## Quick Start
 
@@ -442,10 +451,11 @@ src/io/
   poll_windows.c         - WSAPoll event loop
 src/platform/
   linux/ctx_x86_64.S     - x86-64 assembly (System V ABI)
-  linux/ctx_arm64.S      - ARM64 assembly
-  macos/ctx_x86_64.S     - macOS x86-64 assembly
-  macos/ctx_arm64.S      - macOS ARM64 assembly (Apple Silicon)
-  windows/ctx_x86_64.S   - Windows x86-64 assembly (Microsoft ABI)
+  linux/ctx_arm64.S      - ARM64 assembly (AAPCS64)
+  macos/ctx_x86_64.S     - macOS x86-64 assembly (System V ABI)
+  macos/ctx_arm64.S      - macOS ARM64 assembly (AAPCS64)
+  windows/ctx_x86_64.S   - Windows x86-64 assembly (Microsoft x64 ABI)
+  windows/ctx_arm64.S    - Windows ARM64 assembly (AAPCS64)
 ```
 
 ## License

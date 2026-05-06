@@ -555,9 +555,27 @@ coco_timer_tick(tw, sched)
 
 ## 7. 上下文切换
 
-### 7.1 上下文结构
+### 7.1 ABI 合规性
 
-`coco_ctx_t`（`src/coco_internal.h:13-27`）保存 callee-saved 寄存器：
+所有平台实现严格遵循各自的调用约定：
+
+| 平台 | 架构 | ABI | Callee-Saved 寄存器 |
+|------|------|-----|-------------------|
+| Linux | x86-64 | System V AMD64 | rbx, rbp, r12-r15 |
+| Linux | ARM64 | AAPCS64 | x19-x28, fp, lr, d8-d15 |
+| macOS | x86-64 | System V AMD64 | rbx, rbp, r12-r15 |
+| macOS | ARM64 | AAPCS64 | x19-x28, fp, lr, d8-d15 |
+| Windows | x86-64 | Microsoft x64 | rbx, rbp, rsi, rdi, r12-r15, xmm6-xmm15 |
+| Windows | ARM64 | AAPCS64 | x19-x28, fp, lr, d8-d15 |
+
+**关键修复**：
+- ARM64: 补齐 d8-d15 浮点 callee-saved 寄存器保存（`src/platform/*/ctx_arm64.S`）
+- Windows x86-64: 补齐 rsi/rdi 和 xmm6-xmm15 保存（`src/platform/windows/ctx_x86_64.S`）
+- XMM 寄存器 16 字节对齐：添加 `_pad0` 填充字段（`src/coco_internal.h`）
+
+### 7.2 上下文结构
+
+`coco_ctx_t`（`src/coco_internal.h`）保存所有 callee-saved 寄存器：
 
 ```
 offset  ARM64 字段    x86-64 对应    说明
@@ -804,7 +822,10 @@ stack_top
 | `src/io/poll_windows.c` | 5 | 占位文件 |
 | `src/timer/timer_wheel.c` | 305 | 4 层时间轮 |
 | `src/platform/linux/ctx_x86_64.S` | 78 | Linux x86-64 上下文切换 |
-| `src/platform/linux/ctx_arm64.S` | 17 | Linux ARM64 (stub) |
+| `src/platform/linux/ctx_arm64.S` | 108 | Linux ARM64 上下文切换 (含 d8-d15) |
 | `src/platform/macos/ctx_x86_64.S` | 48 | macOS x86-64 上下文切换 |
-| `src/platform/macos/ctx_arm64.S` | 52 | macOS ARM64 上下文切换 |
-| `src/platform/windows/ctx_x86_64.S` | - | Windows x86-64 上下文切换 |
+| `src/platform/macos/ctx_arm64.S` | 108 | macOS ARM64 上下文切换 (含 d8-d15) |
+| `src/platform/windows/ctx_x86_64.S` | 120 | Windows x86-64 上下文切换 (含 XMM) |
+| `src/platform/windows/ctx_arm64.S` | 70 | Windows ARM64 上下文切换 |
+| `src/platform/abi_detect.c` | 95 | ABI 检测与运行时架构查询 |
+| `include/coco_abi.h` | 80 | ABI 信息头文件 |
