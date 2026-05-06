@@ -121,7 +121,7 @@ TEST(test_aging_no_promote) {
 /**
  * test_aging_multiple - 验证多个协程的老化顺序
  */
-static int coro_exec_order[4] = {0};
+static int coro_exec_order[8] = {0};  /* 3 coros * 2 writes each = 6, use 8 for safety */
 static int coro_exec_count = 0;
 
 static void ordered_coro(void *arg) {

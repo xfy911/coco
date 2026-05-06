@@ -144,7 +144,7 @@ option(COCO_BUILD_TESTS "Build tests" ON)
 if(COCO_BUILD_TESTS)
     enable_testing()
 
-    # 单元测试
+    # 单元测试 (通用)
     set(UNIT_TESTS
         test_coro
         test_channel
@@ -159,7 +159,6 @@ if(COCO_BUILD_TESTS)
         test_batch_io
         test_io_options
         test_syscall_count
-        test_poll_macos
         test_event_loop
         test_aging
         test_lifecycle
@@ -186,6 +185,11 @@ if(COCO_BUILD_TESTS)
         test_context_value
         test_frame_walker
     )
+
+    # 平台特定测试
+    if(PLATFORM STREQUAL "macos")
+        list(APPEND UNIT_TESTS test_poll_macos)
+    endif()
 
     foreach(test_name ${UNIT_TESTS})
         add_executable(${test_name} tests/unit/${test_name}.c)
