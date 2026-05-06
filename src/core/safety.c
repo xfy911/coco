@@ -17,7 +17,7 @@
 #include <sys/mman.h>
 
 /* Global safety mode */
-static coco_safety_mode_t g_safety_mode = COCO_SAFETY_NONE;
+coco_safety_mode_t g_safety_mode = COCO_SAFETY_NONE;
 
 /**
  * Get default configuration for a safety mode.

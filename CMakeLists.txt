@@ -184,6 +184,8 @@ if(COCO_BUILD_TESTS)
         test_sched_hooks
         test_context_value
         test_frame_walker
+        test_global_sched_mt
+        test_stack_shrink
     )
 
     # 平台特定测试
