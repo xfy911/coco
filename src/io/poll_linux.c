@@ -269,6 +269,12 @@ int coco_read(int fd, void *buf, size_t count) {
         return COCO_ERROR;
     }
 
+    /* 确保 socket 为非阻塞模式 */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1 && !(flags & O_NONBLOCK)) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
     while (1) {
         /* 检查取消状态 */
         if (coro->cancelled) {
@@ -306,6 +312,12 @@ int coco_write(int fd, const void *buf, size_t count) {
 
     if (!sched || !coro) {
         return COCO_ERROR;
+    }
+
+    /* 确保 socket 为非阻塞模式 */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1 && !(flags & O_NONBLOCK)) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
 
     size_t written = 0;
@@ -354,6 +366,12 @@ int coco_accept(int fd, void *addr, size_t *addrlen) {
         return COCO_ERROR;
     }
 
+    /* 确保 socket 为非阻塞模式 */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1 && !(flags & O_NONBLOCK)) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
     while (1) {
         /* 检查取消状态 */
         if (coro->cancelled) {
@@ -391,6 +409,12 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
 
     if (!sched || !coro) {
         return COCO_ERROR;
+    }
+
+    /* 确保 socket 为非阻塞模式 */
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1 && !(flags & O_NONBLOCK)) {
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
 
     /* 检查取消状态 */
