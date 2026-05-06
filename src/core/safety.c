@@ -13,6 +13,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 /* Global safety mode */
 static coco_safety_mode_t g_safety_mode = COCO_SAFETY_NONE;
@@ -166,25 +168,90 @@ bool coco_shrink_stack(
     const coco_stack_map_t* stack_map,
     const coco_safety_config_t* config
 ) {
+    if (!coro || !config) {
+        return false;
+    }
+
+    if (!coro->stack_base || !coro->stack_top || coro->stack_size == 0) {
+        return false;
+    }
+
     if (!coco_can_shrink_stack(coro, config)) {
         return false;
     }
 
-    uintptr_t old_base = (uintptr_t)coro->ctx.stack_base;
-    uintptr_t old_limit = (uintptr_t)coro->ctx.stack_limit;
-    size_t old_size = old_limit - old_base;
-
-    // Shrink to half size
-    size_t new_size = old_size / 2;
+    /* Shrink to half size, bounded by min_stack_size */
+    size_t new_size = coro->stack_size / 2;
     if (new_size < config->min_stack_size) {
-        new_size = config->min_stack_size;
+        return false;
     }
 
-    // Similar to growth but smaller
-    // For simplicity, we don't implement shrinking in this phase
-    // Full implementation would allocate smaller stack, copy, adjust
+    /* Page-align new size */
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    new_size = ((new_size + page_size - 1) / page_size) * page_size;
 
-    return false;  // Not implemented yet
+    /* Allocate new stack with guard page */
+    void *new_alloc = mmap(NULL, new_size + page_size,
+                           PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (new_alloc == MAP_FAILED) {
+        return false;
+    }
+
+    /* Set guard page at bottom (lowest address) */
+    mprotect(new_alloc, page_size, PROT_NONE);
+
+    uintptr_t new_base = (uintptr_t)new_alloc + page_size;
+    uintptr_t new_limit = new_base + new_size;
+
+    /* Copy active stack region (from current SP to old_limit) */
+    uintptr_t current_sp = (uintptr_t)coro->ctx.sp;
+    uintptr_t old_base = (uintptr_t)coro->ctx.stack_base;
+    uintptr_t old_limit = (uintptr_t)coro->ctx.stack_limit;
+    size_t active_size = old_limit - current_sp;
+
+    if (active_size > new_size) {
+        munmap(new_alloc, new_size + page_size);
+        return false;
+    }
+
+    /* Copy preserving offset from limit (stack grows down) */
+    size_t sp_offset = old_limit - current_sp;
+    uintptr_t new_sp = new_limit - sp_offset;
+    memcpy((void *)new_sp, (void *)current_sp, active_size);
+
+    /* Calculate delta for pointer adjustment */
+    ptrdiff_t delta = (ptrdiff_t)(new_base - old_base);
+
+    /* Adjust saved FP and SP */
+    uintptr_t saved_fp = (uintptr_t)coro->ctx.fp;
+    uintptr_t saved_sp = (uintptr_t)coro->ctx.sp;
+
+    coco_adjust_frame_pointers(old_base, old_limit - old_base, new_base,
+                               &saved_fp, &saved_sp);
+
+    /* Adjust interior pointers using stack map */
+    if (stack_map) {
+        coco_adjust_stack_pointers(old_base, old_limit, new_base, new_limit,
+                                   stack_map, saved_fp, saved_sp);
+    }
+
+    /* Free old stack */
+    void *old_alloc = (void *)(old_base - page_size);
+    size_t old_total = (old_limit - old_base) + page_size;
+    munmap(old_alloc, old_total);
+
+    /* Update coroutine fields */
+    coro->ctx.stack_base = (void *)new_base;
+    coro->ctx.stack_limit = (void *)new_limit;
+    coro->ctx.fp = (void *)saved_fp;
+    coro->ctx.sp = (void *)saved_sp;
+    coro->stack_base = (void *)new_base;
+    coro->stack_top = (void *)new_limit;
+    coro->stack_size = new_size;
+    coro->current_stack_size = new_size;
+
+    return true;
 }
 
 /**
