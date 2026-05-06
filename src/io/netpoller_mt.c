@@ -424,7 +424,18 @@ int coco_netpoller_register(coco_netpoller_t *np, int fd, uint32_t events,
         ev.events |= EPOLLOUT | EPOLLONESHOT;
     }
 
-    epoll_ctl(np->poll_fd, EPOLL_CTL_MOD, fd, &ev);
+    /* 首次注册使用 ADD，后续使用 MOD */
+    if (epoll_ctl(np->poll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
+        if (errno == EEXIST) {
+            if (epoll_ctl(np->poll_fd, EPOLL_CTL_MOD, fd, &ev) < 0) {
+                pthread_mutex_unlock(&np->lock);
+                return COCO_ERROR;
+            }
+        } else {
+            pthread_mutex_unlock(&np->lock);
+            return COCO_ERROR;
+        }
+    }
 #endif
 
     pthread_mutex_unlock(&np->lock);
