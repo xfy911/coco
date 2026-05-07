@@ -226,17 +226,20 @@ static const char *get_content_type(const char *path) {
     return "application/octet-stream";
 }
 
-/* 发送文件内容（使用 sendfile 零拷贝） */
+/* 发送文件内容（使用 sendfile 零拷贝，支持中断） */
 static int send_file_content(int fd, const char *file_path, size_t file_size, bool head_only) {
     if (head_only) return 0;
 
     int file_fd = open(file_path, O_RDONLY);
     if (file_fd < 0) return -1;
 
-    /* 使用 sendfile 直接从内核缓冲区发送，避免用户态拷贝 */
+    /* 分块发送，每块后检查中断信号 */
     size_t sent = 0;
-    while (sent < file_size) {
-        ssize_t n = sendfile(fd, file_fd, NULL, file_size - sent);
+    const size_t chunk_size = 64 * 1024; /* 64KB per chunk */
+
+    while (sent < file_size && g_running) {
+        size_t to_send = (file_size - sent > chunk_size) ? chunk_size : (file_size - sent);
+        ssize_t n = sendfile(fd, file_fd, NULL, to_send);
         if (n <= 0) {
             close(file_fd);
             return -1;
@@ -245,7 +248,7 @@ static int send_file_content(int fd, const char *file_path, size_t file_size, bo
     }
 
     close(file_fd);
-    return 0;
+    return g_running ? 0 : -1;
 }
 
 /* 发送文件响应 */
