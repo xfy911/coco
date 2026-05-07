@@ -50,12 +50,10 @@ set(CORE_SOURCES
     src/core/frame_walker.c
     src/core/stack_grow.c
     src/core/safety.c
-    src/sched/safepoint.c
     src/sched/global_sched.c
     src/sched/runq.c
     src/sched/sched.c
     src/sched/sched_stats.c
-    src/sched/sched_hooks.c
 )
 
 set(PLATFORM_SOURCES
@@ -172,7 +170,6 @@ if(COCO_BUILD_TESTS)
         test_aging_trigger
         test_stack_pool_multi
         test_stack_pool_mt
-        test_safepoint
         test_global_sched
         test_runq
         test_sched
@@ -183,7 +180,6 @@ if(COCO_BUILD_TESTS)
         test_platform_abstraction
         test_sched_stats
         test_coco_go
-        test_sched_hooks
         test_context_value
         test_frame_walker
         test_global_sched_mt

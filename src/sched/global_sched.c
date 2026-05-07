@@ -6,6 +6,7 @@
 
 #include "global_sched.h"
 #include "runq.h"
+#include "sched.h"
 #include <time.h>
 #include "../core/stack_pool_multi.h"
 #include <stdlib.h>
@@ -258,37 +259,6 @@ coco_processor_t *coco_processor_get(uint32_t id) {
     return g_global_sched->processors[id];
 }
 
-/* Get next runnable coroutine: local queue -> global queue -> work steal */
-static coco_coro_t *get_next_runnable(coco_processor_t *p) {
-    coco_coro_t *coro;
-
-    /* 1. Try local queue */
-    coro = runq_get(p);
-    if (coro) return coro;
-
-    /* 2. Try global queue */
-    coro = coco_global_runq_get();
-    if (coro) return coro;
-
-    /* 3. Try work stealing */
-    coco_global_sched_t *gs = coco_global_get();
-    if (!gs) return NULL;
-
-    uint32_t start = rand() % gs->processor_count;
-    for (uint32_t i = 0; i < gs->processor_count; i++) {
-        uint32_t target_id = (start + i) % gs->processor_count;
-        if (target_id == p->id) continue;
-
-        coco_processor_t *target = gs->processors[target_id];
-        if (!target) continue;
-
-        coro = runq_steal(target);
-        if (coro) return coro;
-    }
-
-    return NULL;
-}
-
 /* Worker thread loop */
 static void *worker_loop(void *arg) {
     coco_processor_t *p = (coco_processor_t *)arg;
@@ -301,7 +271,7 @@ static void *worker_loop(void *arg) {
     g_return_ctx = &p->m->ctx;
 
     while (atomic_load(&gs->running)) {
-        coco_coro_t *coro = get_next_runnable(p);
+        coco_coro_t *coro = find_runnable(p);
         if (coro) {
             atomic_store(&p->curcoro, coro);
             g_current_coro = coro;
