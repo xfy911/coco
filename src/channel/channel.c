@@ -7,6 +7,7 @@
  */
 
 #include "../coco_internal.h"
+#include "channel_common.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -38,35 +39,6 @@ struct coco_channel {
     coco_select_node_t *recv_select_head;
     coco_select_node_t *recv_select_tail;
 };
-
-/* === 普通协程等待队列操作 === */
-
-/* 添加协程到等待队列尾部 */
-static void enqueue_wait_coro(coco_coro_t **head, coco_coro_t **tail, coco_coro_t *coro) {
-    coro->wait_node.next_waiter = NULL;
-    if (*tail) {
-        (*tail)->wait_node.next_waiter = coro;
-    } else {
-        *head = coro;
-    }
-    *tail = coro;
-    coro->wait_node.in_use = true;
-}
-
-/* 从等待队列头部取出协程 */
-static coco_coro_t *dequeue_wait_coro(coco_coro_t **head, coco_coro_t **tail) {
-    coco_coro_t *coro = *head;
-    if (!coro) {
-        return NULL;
-    }
-    *head = coro->wait_node.next_waiter;
-    if (!*head) {
-        *tail = NULL;
-    }
-    coro->wait_node.in_use = false;
-    coro->wait_node.next_waiter = NULL;
-    return coro;
-}
 
 /* === Select 协程等待队列操作 === */
 

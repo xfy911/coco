@@ -4,6 +4,7 @@
  * 互斥锁保护的 channel，支持多线程场景。
  */
 
+#include "channel_common.h"
 #include "channel_mt.h"
 #include "../sched/sched.h"
 #include <stdlib.h>
@@ -13,33 +14,6 @@
 /* 外部全局变量 */
 extern _Thread_local coco_sched_t *g_current_sched;
 extern _Thread_local coco_coro_t *g_current_coro;
-
-/* 添加协程到等待队列尾部 */
-static void enqueue_wait_coro_mt(coco_coro_t **head, coco_coro_t **tail, coco_coro_t *coro) {
-    coro->wait_node.next_waiter = NULL;
-    if (*tail) {
-        (*tail)->wait_node.next_waiter = coro;
-    } else {
-        *head = coro;
-    }
-    *tail = coro;
-    coro->wait_node.in_use = true;
-}
-
-/* 从等待队列头部取出协程 */
-static coco_coro_t *dequeue_wait_coro_mt(coco_coro_t **head, coco_coro_t **tail) {
-    coco_coro_t *coro = *head;
-    if (!coro) {
-        return NULL;
-    }
-    *head = coro->wait_node.next_waiter;
-    if (!*head) {
-        *tail = NULL;
-    }
-    coro->wait_node.in_use = false;
-    coro->wait_node.next_waiter = NULL;
-    return coro;
-}
 
 /**
  * coco_channel_mt_create - 创建多线程 channel
@@ -97,14 +71,14 @@ void coco_channel_mt_destroy(coco_channel_mt_t *ch) {
 
     /* 唤醒所有等待者 */
     while (ch->recv_wait_head) {
-        coco_coro_t *coro = dequeue_wait_coro_mt(&ch->recv_wait_head, &ch->recv_wait_tail);
+        coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (coro) {
             coro->wait_node.value = NULL;
         }
     }
 
     while (ch->send_wait_head) {
-        coco_coro_t *coro = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+        coco_coro_t *coro = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (coro) {
             coro->wait_node.value = NULL;
         }
@@ -138,7 +112,7 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
     }
 
     /* 检查是否有接收者在等待 */
-    coco_coro_t *recv_waiter = dequeue_wait_coro_mt(&ch->recv_wait_head, &ch->recv_wait_tail);
+    coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
     if (recv_waiter) {
         recv_waiter->wait_node.value = value;
         pthread_mutex_unlock(&ch->lock);
@@ -165,7 +139,7 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
     }
 
     coro->wait_node.value = value;
-    enqueue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail, coro);
+    enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro);
     coro->state = COCO_STATE_WAITING;
     pthread_mutex_unlock(&ch->lock);
 
@@ -208,7 +182,7 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
         ch->count--;
 
         /* 缓冲区有空间，唤醒发送者 */
-        coco_coro_t *send_waiter = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+        coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (send_waiter) {
             ch->buffer[ch->tail] = send_waiter->wait_node.value;
             ch->tail = (ch->tail + 1) % ch->capacity;
@@ -224,7 +198,7 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
     }
 
     /* 无缓冲 channel: 检查是否有发送者等待 */
-    coco_coro_t *send_waiter = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+    coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
     if (send_waiter) {
         *value = send_waiter->wait_node.value;
         pthread_mutex_unlock(&ch->lock);
@@ -240,7 +214,7 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
     }
 
     coro->wait_node.value = NULL;
-    enqueue_wait_coro_mt(&ch->recv_wait_head, &ch->recv_wait_tail, coro);
+    enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro);
     coro->state = COCO_STATE_WAITING;
     pthread_mutex_unlock(&ch->lock);
 
@@ -274,7 +248,7 @@ int coco_channel_mt_send_thread(coco_channel_mt_t *ch, void *value) {
 
     while (!ch->closed) {
         /* 检查是否有接收者在等待 */
-        coco_coro_t *recv_waiter = dequeue_wait_coro_mt(&ch->recv_wait_head, &ch->recv_wait_tail);
+        coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (recv_waiter) {
             recv_waiter->wait_node.value = value;
             pthread_mutex_unlock(&ch->lock);
@@ -317,7 +291,7 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
             ch->head = (ch->head + 1) % ch->capacity;
             ch->count--;
 
-            coco_coro_t *send_waiter = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+            coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
             if (send_waiter) {
                 ch->buffer[ch->tail] = send_waiter->wait_node.value;
                 ch->tail = (ch->tail + 1) % ch->capacity;
@@ -333,7 +307,7 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
         }
 
         /* 无缓冲 channel: 检查是否有发送者等待 */
-        coco_coro_t *send_waiter = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+        coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (send_waiter) {
             *value = send_waiter->wait_node.value;
             pthread_mutex_unlock(&ch->lock);
@@ -375,7 +349,7 @@ int coco_channel_mt_try_send(coco_channel_mt_t *ch, void *value) {
     }
 
     /* 无缓冲 channel: 检查接收者 */
-    coco_coro_t *recv_waiter = dequeue_wait_coro_mt(&ch->recv_wait_head, &ch->recv_wait_tail);
+    coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
     if (recv_waiter) {
         recv_waiter->wait_node.value = value;
         pthread_mutex_unlock(&ch->lock);
@@ -408,7 +382,7 @@ int coco_channel_mt_try_recv(coco_channel_mt_t *ch, void **value) {
     }
 
     /* 无缓冲 channel: 检查发送者 */
-    coco_coro_t *send_waiter = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+    coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
     if (send_waiter) {
         *value = send_waiter->wait_node.value;
         pthread_mutex_unlock(&ch->lock);
@@ -444,7 +418,7 @@ void coco_channel_mt_close(coco_channel_mt_t *ch) {
 
     /* 唤醒所有等待者 */
     while (ch->recv_wait_head) {
-        coco_coro_t *coro = dequeue_wait_coro_mt(&ch->recv_wait_head, &ch->recv_wait_tail);
+        coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (coro) {
             coro->wait_node.value = NULL;
             schedule_ready(coro);
@@ -452,7 +426,7 @@ void coco_channel_mt_close(coco_channel_mt_t *ch) {
     }
 
     while (ch->send_wait_head) {
-        coco_coro_t *coro = dequeue_wait_coro_mt(&ch->send_wait_head, &ch->send_wait_tail);
+        coco_coro_t *coro = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (coro) {
             coro->wait_node.value = NULL;
             schedule_ready(coro);
