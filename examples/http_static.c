@@ -291,6 +291,95 @@ static int send_file_response(int fd, const char *file_path, bool head_only) {
     return send_file_content(fd, file_path, st.st_size, head_only);
 }
 
+/* 索引文件列表 */
+static const char *INDEX_FILES[] = {"index.html", "index.htm", NULL};
+
+/* 查找索引文件 */
+static int find_index_file(const char *dir_path, char *index_path, size_t size) {
+    for (int i = 0; INDEX_FILES[i]; i++) {
+        snprintf(index_path, size, "%s/%s", dir_path, INDEX_FILES[i]);
+        if (access(index_path, R_OK) == 0) {
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* 生成目录列表 HTML */
+static void send_directory_listing(int fd, const char *dir_path, const char *url_path, bool head_only) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        send_error_response(fd, 500, "Internal Server Error");
+        return;
+    }
+
+    /* 构建 HTML */
+    char *body = malloc(BUFFER_SIZE * 4);
+    if (!body) {
+        closedir(dir);
+        send_error_response(fd, 500, "Internal Server Error");
+        return;
+    }
+
+    int pos = snprintf(body, BUFFER_SIZE * 4,
+        "<!DOCTYPE html>\n"
+        "<html><head><title>Index of %s</title></head>\n"
+        "<body><h1>Index of %s</h1><hr><pre>\n",
+        url_path, url_path);
+
+    /* 父目录链接 */
+    if (strcmp(url_path, "/") != 0) {
+        pos += snprintf(body + pos, BUFFER_SIZE * 4 - pos,
+            "<a href=\"../\">../</a>\n");
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && pos < BUFFER_SIZE * 4 - 256) {
+        if (entry->d_name[0] == '.') continue; /* 跳过隐藏文件 */
+
+        char full_path[PATH_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) < 0) continue;
+
+        char time_str[32];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&st.st_mtime));
+
+        if (S_ISDIR(st.st_mode)) {
+            pos += snprintf(body + pos, BUFFER_SIZE * 4 - pos,
+                "<a href=\"%s/\">%-40s</a>  -         -\n",
+                entry->d_name, entry->d_name);
+        } else {
+            pos += snprintf(body + pos, BUFFER_SIZE * 4 - pos,
+                "<a href=\"%s\">%-40s</a>  %10ld  %s\n",
+                entry->d_name, entry->d_name, (long)st.st_size, time_str);
+        }
+    }
+
+    closedir(dir);
+
+    pos += snprintf(body + pos, BUFFER_SIZE * 4 - pos,
+        "</pre><hr></body></html>\n");
+
+    http_response_t resp = {
+        .status_code = 200,
+        .status_text = "OK",
+        .content_type = "text/html; charset=utf-8",
+        .content_length = pos
+    };
+
+    char header[512];
+    int header_len = build_response_header(header, sizeof(header), &resp);
+
+    coco_write(fd, header, header_len);
+    if (!head_only) {
+        coco_write(fd, body, pos);
+    }
+
+    free(body);
+}
+
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
