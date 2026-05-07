@@ -53,6 +53,7 @@ typedef struct {
 } http_response_t;
 
 static volatile sig_atomic_t g_running = 1;
+static int g_listen_fd = -1;
 
 /* URL 解码 */
 static int url_decode(const char *src, char *dst, size_t dst_size) {
@@ -500,6 +501,11 @@ static void accept_loop(void *arg) {
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
+    /* 关闭监听 socket 以中断 coco_accept() */
+    if (g_listen_fd >= 0) {
+        close(g_listen_fd);
+        g_listen_fd = -1;
+    }
 }
 
 static void print_usage(const char *prog) {
@@ -583,6 +589,8 @@ int main(int argc, char **argv) {
     }
 
     printf("Listening on port %d...\n", port);
+
+    g_listen_fd = listen_fd;
 
     coco_sched_t *sched = coco_sched_create();
     if (!sched) {
