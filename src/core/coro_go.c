@@ -127,9 +127,9 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
             coco_global_runq_put(coro);
         }
 
-        /* Wake idle workers */
+        /* Wake idle workers - broadcast to all for high throughput */
         pthread_mutex_lock(&gs->idle_lock);
-        pthread_cond_signal(&gs->idle_cond);
+        pthread_cond_broadcast(&gs->idle_cond);
         pthread_mutex_unlock(&gs->idle_lock);
 
         /* Increment active coroutine count */

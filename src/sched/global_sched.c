@@ -283,6 +283,10 @@ static void *worker_loop(void *arg) {
 
     /* Thread-local state for worker threads */
     extern _Thread_local coco_coro_t *g_current_coro;
+    extern _Thread_local coco_sched_t *g_current_sched;
+
+    /* Set g_current_sched to main_sched for coco_yield/coco_read etc. */
+    g_current_sched = gs->main_sched;
 
     /* Set return context for this worker thread */
     g_return_ctx = &p->m->ctx;

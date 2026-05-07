@@ -3,8 +3,11 @@
  *
  * 使用 coco 全局调度器实现多线程协程调度。
  * 工作线程自动分发协程，充分利用多核 CPU。
+ *
+ * 注意：多线程模式下使用阻塞 I/O，因为每个连接在独立协程中执行。
  */
 
+#define _GNU_SOURCE
 #include "coco.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,47 +112,15 @@ static int build_response_header(char *buffer, size_t size, const http_response_
         resp->content_length);
 }
 
-/* 多线程环境下使用阻塞 I/O（简化版）
- * 注意：在多线程模式下，coco_read/coco_write 需要 g_current_sched，
- * 但工作线程没有设置它。这里使用直接 read/write 作为简化方案。
- * 实际生产环境应使用 netpoller_mt 或修复 coco_read 支持 MT。
+/* 多线程环境下使用阻塞 I/O
+ * 每个连接在独立协程中执行，阻塞不会影响其他协程。
  */
-static int mt_read(int fd, void *buf, size_t count) {
-    while (g_running) {
-        ssize_t n = read(fd, buf, count);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                /* 使用 poll 等待 */
-                struct pollfd pfd = { .fd = fd, .events = POLLIN };
-                int ret = poll(&pfd, 1, 1000);
-                if (ret < 0 && errno != EINTR) return -1;
-                continue;
-            }
-            return -1;
-        }
-        return (int)n;
-    }
-    return -1;
+static ssize_t mt_read(int fd, void *buf, size_t count) {
+    return read(fd, buf, count);
 }
 
-static int mt_write(int fd, const void *buf, size_t count) {
-    size_t written = 0;
-    while (written < count && g_running) {
-        ssize_t n = write(fd, (const char*)buf + written, count - written);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-                int ret = poll(&pfd, 1, 1000);
-                if (ret < 0 && errno != EINTR) return -1;
-                continue;
-            }
-            return -1;
-        }
-        written += n;
-    }
-    return (int)written;
+static ssize_t mt_write(int fd, const void *buf, size_t count) {
+    return write(fd, buf, count);
 }
 
 /* 发送错误响应 */
@@ -545,6 +516,7 @@ int main(int argc, char **argv) {
 
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -558,7 +530,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (listen(listen_fd, 128) < 0) {
+    /* 更大的 backlog 以支持高并发 */
+    if (listen(listen_fd, 4096) < 0) {
         perror("listen");
         close(listen_fd);
         return 1;
@@ -579,13 +552,22 @@ int main(int argc, char **argv) {
         struct sockaddr_in client_addr;
         socklen_t addrlen = sizeof(client_addr);
 
-        int client_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &addrlen);
+        int client_fd = accept4(listen_fd, (struct sockaddr*)&client_addr, &addrlen, SOCK_NONBLOCK);
         if (client_fd < 0) {
             if (!g_running) break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* 使用 poll 等待新连接 */
+                struct pollfd pfd = { .fd = listen_fd, .events = POLLIN };
+                int ret = poll(&pfd, 1, 100);
+                if (ret < 0 && errno != EINTR) {
+                    perror("poll");
+                }
+                continue;
+            }
+            if (errno == EINTR) continue;
+            perror("accept");
             continue;
         }
-
-        set_nonblock(client_fd);
 
         struct client_arg *ca = malloc(sizeof(*ca));
         if (ca) {
