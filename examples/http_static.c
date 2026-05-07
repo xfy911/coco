@@ -152,6 +152,58 @@ static int send_error_response(int fd, int code, const char *text) {
     return 0;
 }
 
+/* 验证请求路径是否在 root_dir 内（防止目录遍历）
+ * 返回: 0=有效, 403=目录遍历, 404=不存在, 500=服务器错误
+ */
+static int validate_path(const char *root_dir, const char *req_path,
+                         char *safe_path, size_t safe_path_size) {
+    char resolved_root[PATH_MAX];
+    char full_path[PATH_MAX];
+    char resolved_path[PATH_MAX];
+
+    /* 规范化 root_dir */
+    if (!realpath(root_dir, resolved_root)) {
+        return 500;
+    }
+
+    /* 跳过开头的 '/' */
+    const char *p = req_path;
+    while (*p == '/') p++;
+
+    /* 构建完整路径 */
+    if (*p == '\0') {
+        /* 根目录请求 */
+        strncpy(safe_path, resolved_root, safe_path_size - 1);
+        safe_path[safe_path_size - 1] = '\0';
+        return 0;
+    }
+
+    snprintf(full_path, sizeof(full_path), "%s/%s", resolved_root, p);
+
+    /* 规范化请求路径 */
+    if (!realpath(full_path, resolved_path)) {
+        /* 文件/目录不存在 */
+        return 404;
+    }
+
+    /* 验证规范化路径是否在 root_dir 内 */
+    size_t root_len = strlen(resolved_root);
+    if (strncmp(resolved_path, resolved_root, root_len) != 0) {
+        return 403; /* 目录遍历攻击 */
+    }
+
+    /* 检查路径分隔符：确保是 root_dir 或 root_dir 的子路径 */
+    if (resolved_path[root_len] != '\0' && resolved_path[root_len] != '/') {
+        return 403; /* 类似 /www2 绕过 /www */
+    }
+
+    /* 复制安全路径 */
+    strncpy(safe_path, resolved_path, safe_path_size - 1);
+    safe_path[safe_path_size - 1] = '\0';
+
+    return 0;
+}
+
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
