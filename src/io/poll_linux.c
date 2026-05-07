@@ -10,14 +10,13 @@
  */
 
 #include "../coco_internal.h"
+#include "io_internal.h"
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
-#include <stdio.h>
-#include <sys/utsname.h>
 #include <poll.h>
 
 /* 外部全局变量（TLS） */
@@ -34,20 +33,6 @@ extern int coco_batch_cancel_iouring(coco_batch_io_t *batch);
 extern void coco_batch_end_iouring(coco_batch_io_t *batch);
 extern void coco_iouring_get_stats_internal(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count);
 #endif
-
-/* 检测内核版本 */
-static bool kernel_version_at_least(int major, int minor) {
-    struct utsname uts;
-    if (uname(&uts) != 0) return false;
-
-    int kmajor = 0, kminor = 0, kpatch = 0;
-    sscanf(uts.release, "%d.%d.%d", &kmajor, &kminor, &kpatch);
-
-    if (kmajor > major) return true;
-    if (kmajor == major && kminor > minor) return true;
-    if (kmajor == major && kminor == minor) return true;
-    return false;
-}
 
 /* === 平台抽象: 非阻塞设置 === */
 
@@ -333,43 +318,16 @@ void coco_batch_end(coco_batch_io_t *batch) {
 /* === I/O 配置 API === */
 
 int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options) {
-    if (!sched || !options) {
-        return COCO_ERROR;
-    }
-
-    /* 必须在调度器初始化之前调用 */
-    if (sched->poll_fd >= 0) {
-        return COCO_ERROR;
-    }
-
-    sched->io_options = *options;
-    sched->io_options_set = true;
-
-    return COCO_OK;
+    return coco_sched_set_io_options_impl(sched, options);
 }
 
 int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
-    if (!sched || !options) {
-        return COCO_ERROR;
-    }
-
-    /* epoll 后端返回默认配置 */
-    options->queue_depth = 256;
-    options->sqpoll_enabled = false;
-    options->sqpoll_cpu = -1;
-    options->sqpoll_idle_ms = 0;
-
-    if (sched->io_options_set) {
-        *options = sched->io_options;
-    }
-
-    return COCO_OK;
+    return coco_sched_get_io_options_impl(sched, options);
 }
 
 void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
     if (!sched) {
-        if (submit_count) *submit_count = 0;
-        if (syscall_count) *syscall_count = 0;
+        coco_iouring_get_stats_default(submit_count, syscall_count);
         return;
     }
 #ifdef __linux__
@@ -378,6 +336,5 @@ void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_
         return;
     }
 #endif
-    if (submit_count) *submit_count = 0;
-    if (syscall_count) *syscall_count = 0;
+    coco_iouring_get_stats_default(submit_count, syscall_count);
 }

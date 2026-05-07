@@ -15,6 +15,7 @@
 #ifdef _WIN32
 
 #include "../coco_internal.h"
+#include "io_internal.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
@@ -489,75 +490,21 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
 
 /* === 批量 I/O API (WSAPoll 不支持) === */
 
-coco_batch_io_t *coco_batch_begin(coco_sched_t *sched) {
-    (void)sched;
-    return NULL;  /* WSAPoll 不支持批量 I/O */
-}
-
-int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count) {
-    (void)batch; (void)fd; (void)buf; (void)count;
-    return COCO_ERROR;
-}
-
-int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count) {
-    (void)batch; (void)fd; (void)buf; (void)count;
-    return COCO_ERROR;
-}
-
-int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results) {
-    (void)batch; (void)results; (void)max_results;
-    return COCO_ERROR;
-}
-
-int coco_batch_cancel(coco_batch_io_t *batch) {
-    (void)batch;
-    return COCO_ERROR;
-}
-
-void coco_batch_end(coco_batch_io_t *batch) {
-    (void)batch;
-}
+COCO_BATCH_IO_STUBS
 
 /* === I/O 配置 API === */
 
 int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options) {
-    if (!sched || !options) {
-        return COCO_ERROR;
-    }
-
-    /* 必须在调度器初始化之前调用 */
-    if (sched->poll_fd >= 0) {
-        return COCO_ERROR;
-    }
-
-    sched->io_options = *options;
-    sched->io_options_set = true;
-
-    return COCO_OK;
+    return coco_sched_set_io_options_impl(sched, options);
 }
 
 int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options) {
-    if (!sched || !options) {
-        return COCO_ERROR;
-    }
-
-    /* WSAPoll 后端返回默认配置 */
-    options->queue_depth = 256;
-    options->sqpoll_enabled = false;
-    options->sqpoll_cpu = -1;
-    options->sqpoll_idle_ms = 0;
-
-    if (sched->io_options_set) {
-        *options = sched->io_options;
-    }
-
-    return COCO_OK;
+    return coco_sched_get_io_options_impl(sched, options);
 }
 
 void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count) {
     (void)sched;
-    if (submit_count) *submit_count = 0;
-    if (syscall_count) *syscall_count = 0;
+    coco_iouring_get_stats_default(submit_count, syscall_count);
 }
 
 #endif /* _WIN32 */

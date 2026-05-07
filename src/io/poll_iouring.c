@@ -6,6 +6,7 @@
  */
 
 #include "../coco_internal.h"
+#include "io_internal.h"
 
 #ifdef __linux__
 
@@ -15,10 +16,8 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/utsname.h>
 
 /* 外部全局变量（TLS） */
 extern _Thread_local coco_sched_t *g_current_sched;
@@ -101,20 +100,6 @@ static void req_free(coco_iouring_t *iou, iouring_req_t *req) {
     } else {
         free(req);
     }
-}
-
-/* 检测内核版本 */
-static bool kernel_version_at_least(int major, int minor) {
-    struct utsname uts;
-    if (uname(&uts) != 0) return false;
-
-    int kmajor = 0, kminor = 0, kpatch = 0;
-    sscanf(uts.release, "%d.%d.%d", &kmajor, &kminor, &kpatch);
-
-    if (kmajor > major) return true;
-    if (kmajor == major && kminor > minor) return true;
-    if (kmajor == major && kminor == minor && kpatch >= 0) return true;
-    return false;
 }
 
 /* 检测 SQPOLL 支持 (Linux 5.11+) */
