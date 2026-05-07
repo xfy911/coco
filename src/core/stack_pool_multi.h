@@ -8,6 +8,7 @@
 #ifndef STACK_POOL_MULTI_H
 #define STACK_POOL_MULTI_H
 
+#include "stack_common.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -15,27 +16,6 @@
 /* 栈池大小类 - 8 种尺寸 */
 #define STACK_POOL_MULTI_NUM_CLASSES  8
 #define STACK_POOL_MULTI_CLASS_LIMIT  256  /* 每个 size class 上限 */
-
-/* Size classes: 8KB, 16KB, 32KB, 64KB, 128KB, 256KB, 512KB, 1MB */
-#define STACK_SIZE_8K    (8 * 1024)
-#define STACK_SIZE_16K   (16 * 1024)
-#define STACK_SIZE_32K   (32 * 1024)
-#define STACK_SIZE_64K   (64 * 1024)
-#define STACK_SIZE_128K  (128 * 1024)
-#define STACK_SIZE_256K  (256 * 1024)
-#define STACK_SIZE_512K  (512 * 1024)
-#define STACK_SIZE_1M    (1024 * 1024)
-
-/* 最小和默认尺寸 */
-#define STACK_SIZE_MIN     STACK_SIZE_8K
-#define STACK_SIZE_DEFAULT STACK_SIZE_32K
-
-/* 栈池选择性清零模式 */
-typedef enum {
-    STACK_ZERO_NONE = 0,      /* 不清零（最快） */
-    STACK_ZERO_TOP_1K = 1,    /* 仅清零栈顶 1KB（推荐） */
-    STACK_ZERO_FULL = 2       /* 清零全部（最安全） */
-} stack_zero_mode_t;
 
 /* 空闲栈节点 - 嵌入栈空间 */
 typedef struct stack_node_multi {

@@ -38,6 +38,7 @@ set(CORE_SOURCES
     src/core/context.c
     src/core/context_api.c
     src/core/context_coro.c
+    src/core/stack_common.c
     src/core/stack.c
     src/core/signal.c
     src/core/stack_pool.c

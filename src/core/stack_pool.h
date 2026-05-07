@@ -7,6 +7,7 @@
 #ifndef STACK_POOL_H
 #define STACK_POOL_H
 
+#include "stack_common.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -15,17 +16,6 @@
 #define STACK_POOL_CLASS_LIMIT  256  /* 每个 size class 上限 */
 
 /* Size classes: 16KB, 32KB, 64KB, 128KB */
-#define STACK_SIZE_16K   (16 * 1024)
-#define STACK_SIZE_32K   (32 * 1024)
-#define STACK_SIZE_64K   (64 * 1024)
-#define STACK_SIZE_128K  (128 * 1024)
-
-/* 栈池选择性清零模式 */
-typedef enum {
-    STACK_ZERO_NONE = 0,      /* 不清零（最快，需确保协程入口初始化所有状态） */
-    STACK_ZERO_TOP_1K = 1,    /* 仅清零栈顶 1KB（推荐，平衡安全与性能） */
-    STACK_ZERO_FULL = 2       /* 清零全部（最安全，最慢） */
-} stack_zero_mode_t;
 
 /* 空闲栈节点 - 嵌入栈空间 */
 typedef struct stack_node {

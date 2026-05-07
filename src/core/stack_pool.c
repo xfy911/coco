@@ -4,24 +4,11 @@
  * 单线程设计：栈池仅限单调度器使用，无需同步
  */
 
+#include "stack_common.h"
 #include "stack_pool.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <unistd.h>
-
-#ifdef __APPLE__
-#define MAP_ANONYMOUS MAP_ANON
-#endif
-
-/* 获取系统页大小 */
-static size_t get_page_size(void) {
-    static size_t page_size = 0;
-    if (page_size == 0) {
-        page_size = sysconf(_SC_PAGESIZE);
-    }
-    return page_size;
-}
 
 /* 获取 size class 索引 */
 static int get_size_class_index(size_t size) {
@@ -30,43 +17,6 @@ static int get_size_class_index(size_t size) {
     if (size <= STACK_SIZE_64K) return 2;
     if (size <= STACK_SIZE_128K) return 3;
     return -1;  /* 超出范围，不使用池 */
-}
-
-/* 分配栈（mmap + guard page） */
-static void *alloc_stack_mmap(size_t size) {
-    size_t page_size = get_page_size();
-    size = (size + page_size - 1) & ~(page_size - 1);
-    size_t total_size = size + page_size;
-
-    void *stack_base = mmap(
-        NULL,
-        total_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0
-    );
-
-    if (stack_base == MAP_FAILED) {
-        return NULL;
-    }
-
-    /* 设置 guard page */
-    if (mprotect(stack_base, page_size, PROT_NONE) != 0) {
-        munmap(stack_base, total_size);
-        return NULL;
-    }
-
-    return (void*)((uintptr_t)stack_base + total_size);
-}
-
-/* 释放栈（munmap） */
-static void free_stack_mmap(void *stack_top, size_t size) {
-    size_t page_size = get_page_size();
-    size = (size + page_size - 1) & ~(page_size - 1);
-    size_t total_size = size + page_size;
-    void *stack_base = (void*)((uintptr_t)stack_top - total_size);
-    munmap(stack_base, total_size);
 }
 
 /* 创建栈池 */
@@ -113,22 +63,6 @@ void stack_pool_destroy(stack_pool_t *pool) {
     }
 
     free(pool);
-}
-
-/* 选择性清零栈 */
-static void zero_stack(void *stack_top, size_t size, stack_zero_mode_t mode) {
-    if (mode == STACK_ZERO_NONE) {
-        return;
-    }
-
-    if (mode == STACK_ZERO_TOP_1K) {
-        /* 仅清零栈顶 1KB（协程入口使用区域） */
-        memset((void*)((uintptr_t)stack_top - 1024), 0, 1024);
-    } else {
-        /* 清零全部 */
-        void *stack_base = (void*)((uintptr_t)stack_top - size);
-        memset(stack_base, 0, size);
-    }
 }
 
 /* 从栈池分配 */

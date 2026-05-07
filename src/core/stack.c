@@ -5,22 +5,8 @@
  */
 
 #include "../coco_internal.h"
-#include <stdlib.h>
+#include "stack_common.h"
 #include <sys/mman.h>
-#include <unistd.h>
-
-#ifdef __APPLE__
-#define MAP_ANONYMOUS MAP_ANON
-#endif
-
-/* 获取系统页大小 */
-static size_t get_page_size(void) {
-    static size_t page_size = 0;
-    if (page_size == 0) {
-        page_size = sysconf(_SC_PAGESIZE);
-    }
-    return page_size;
-}
 
 /**
  * coco_stack_alloc - 分配栈内存 + guard page
