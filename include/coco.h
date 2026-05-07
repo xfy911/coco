@@ -27,6 +27,9 @@
 extern "C" {
 #endif
 
+/* Forward declarations */
+struct coco_context;
+
 /* === Error Codes === */
 /** @defgroup ErrorCodes Error Codes
  *  @brief Error codes returned by coco functions
@@ -708,6 +711,48 @@ int coco_global_sched_wait(void);
  * Gracefully shuts down all worker threads.
  */
 int coco_global_sched_stop(void);
+
+/**
+ * @brief Coroutine launch options for coco_go
+ */
+typedef struct coco_go_opts {
+    size_t stack_size;          /**< Stack size (0 = default) */
+    struct coco_context *context; /**< Associated context (optional) */
+    int priority;               /**< Priority (-1 = default) */
+    int p_id;                   /**<指定 P (-1 = auto select) */
+} coco_go_opts_t;
+
+/**
+ * @brief Launch a coroutine (auto-select best P)
+ * @param entry Entry function
+ * @param arg Entry argument
+ * @return Coroutine handle, or NULL on failure
+ *
+ * In multi-threaded scheduler, auto-selects the least loaded P.
+ * In single-threaded scheduler, uses current scheduler.
+ */
+coco_coro_t *coco_go(void (*entry)(void*), void *arg);
+
+/**
+ * @brief Launch a coroutine on specified P
+ * @param p_id P's ID
+ * @param entry Entry function
+ * @param arg Entry argument
+ * @return Coroutine handle, or NULL on failure
+ *
+ * Explicitly specify P for data locality scenarios.
+ */
+coco_coro_t *coco_go_on(int p_id, void (*entry)(void*), void *arg);
+
+/**
+ * @brief Launch a coroutine with options
+ * @param entry Entry function
+ * @param arg Entry argument
+ * @param opts Options (can be NULL)
+ * @return Coroutine handle, or NULL on failure
+ */
+coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
+                                const coco_go_opts_t *opts);
 /** @} */
 
 #ifdef __cplusplus

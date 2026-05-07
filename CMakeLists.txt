@@ -232,6 +232,7 @@ if(COCO_BUILD_EXAMPLES)
         select
         priority
         http_static
+        http_static_mt
     )
 
     foreach(example_name ${EXAMPLES})
