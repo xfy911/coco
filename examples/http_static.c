@@ -35,7 +35,122 @@
 #define REQUEST_TIMEOUT_MS 30000
 #define MAX_PATH 1024
 
+/* HTTP 请求结构 */
+typedef struct {
+    char method[16];
+    char path[MAX_PATH];
+    char version[16];
+    bool keep_alive;
+} http_request_t;
+
+/* HTTP 响应结构 */
+typedef struct {
+    int status_code;
+    const char *status_text;
+    const char *content_type;
+    size_t content_length;
+} http_response_t;
+
 static volatile sig_atomic_t g_running = 1;
+
+/* 状态码文本 */
+static const char *get_status_text(int code) {
+    switch (code) {
+        case 200: return "OK";
+        case 400: return "Bad Request";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 500: return "Internal Server Error";
+        default:  return "Unknown";
+    }
+}
+
+/* URL 解码 */
+static int url_decode(const char *src, char *dst, size_t dst_size) {
+    size_t i = 0, j = 0;
+    while (src[i] && j < dst_size - 1) {
+        if (src[i] == '%' && isxdigit((unsigned char)src[i+1]) && isxdigit((unsigned char)src[i+2])) {
+            char hex[3] = {src[i+1], src[i+2], 0};
+            dst[j++] = (char)strtol(hex, NULL, 16);
+            i += 3;
+        } else if (src[i] == '+') {
+            dst[j++] = ' ';
+            i++;
+        } else {
+            dst[j++] = src[i++];
+        }
+    }
+    dst[j] = '\0';
+    return 0;
+}
+
+/* 解析 HTTP 请求 */
+static int parse_http_request(const char *buffer, size_t len, http_request_t *req) {
+    memset(req, 0, sizeof(*req));
+    req->keep_alive = false;
+
+    /* 解析请求行: METHOD PATH VERSION */
+    int n = sscanf(buffer, "%15s %1023s %15s", req->method, req->path, req->version);
+    if (n != 3) return -1;
+
+    /* 检查 HTTP 版本 */
+    if (strncmp(req->version, "HTTP/1.", 7) != 0) return -1;
+
+    /* 检查 keep-alive */
+    const char *conn = strcasestr(buffer, "\r\nConnection:");
+    if (conn) {
+        conn += 13;
+        while (*conn == ' ') conn++;
+        if (strncasecmp(conn, "keep-alive", 10) == 0) {
+            req->keep_alive = true;
+        }
+    }
+
+    /* HTTP/1.1 默认 keep-alive */
+    if (strcmp(req->version, "HTTP/1.1") == 0 && !strcasestr(buffer, "\r\nConnection: close")) {
+        req->keep_alive = true;
+    }
+
+    return 0;
+}
+
+/* 构建响应头 */
+static int build_response_header(char *buffer, size_t size, const http_response_t *resp) {
+    return snprintf(buffer, size,
+        "HTTP/1.1 %d %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: keep-alive\r\n"
+        "\r\n",
+        resp->status_code, resp->status_text,
+        resp->content_type ? resp->content_type : "application/octet-stream",
+        resp->content_length);
+}
+
+/* 发送错误响应 */
+static int send_error_response(int fd, int code, const char *text) {
+    char body[256];
+    int body_len = snprintf(body, sizeof(body),
+        "<html><head><title>%d %s</title></head>"
+        "<body><h1>%d %s</h1></body></html>",
+        code, text, code, text);
+
+    http_response_t resp = {
+        .status_code = code,
+        .status_text = text,
+        .content_type = "text/html; charset=utf-8",
+        .content_length = body_len
+    };
+
+    char header[512];
+    int header_len = build_response_header(header, sizeof(header), &resp);
+
+    coco_write(fd, header, header_len);
+    coco_write(fd, body, body_len);
+
+    return 0;
+}
 
 static void signal_handler(int sig) {
     (void)sig;
