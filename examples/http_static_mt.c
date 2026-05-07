@@ -162,28 +162,42 @@ static int validate_path(const char *root_dir, const char *req_path,
     while (*p == '/') p++;
 
     if (*p == '\0') {
-        strncpy(safe_path, resolved_root, safe_path_size - 1);
-        safe_path[safe_path_size - 1] = '\0';
+        size_t len = strlen(resolved_root);
+        if (len >= safe_path_size) {
+            return 500;
+        }
+        memcpy(safe_path, resolved_root, len + 1);
         return 0;
     }
 
-    snprintf(full_path, sizeof(full_path), "%s/%s", resolved_root, p);
+    size_t root_len = strlen(resolved_root);
+    size_t req_len = strlen(p);
+    /* 确保 full_path 有足够空间 */
+    if (root_len >= sizeof(full_path) - 2 || req_len >= sizeof(full_path) - root_len - 1) {
+        return 500;
+    }
+    memcpy(full_path, resolved_root, root_len);
+    full_path[root_len] = '/';
+    memcpy(full_path + root_len + 1, p, req_len + 1);
 
     if (!realpath(full_path, resolved_path)) {
         return 404;
     }
 
-    size_t root_len = strlen(resolved_root);
-    if (strncmp(resolved_path, resolved_root, root_len) != 0) {
+    size_t res_len = strlen(resolved_root);
+    if (strncmp(resolved_path, resolved_root, res_len) != 0) {
         return 403;
     }
 
-    if (resolved_path[root_len] != '\0' && resolved_path[root_len] != '/') {
+    if (resolved_path[res_len] != '\0' && resolved_path[res_len] != '/') {
         return 403;
     }
 
-    strncpy(safe_path, resolved_path, safe_path_size - 1);
-    safe_path[safe_path_size - 1] = '\0';
+    size_t path_len = strlen(resolved_path);
+    if (path_len >= safe_path_size) {
+        return 500;
+    }
+    memcpy(safe_path, resolved_path, path_len + 1);
 
     return 0;
 }
@@ -270,7 +284,12 @@ static int send_file_response(int fd, const char *file_path, bool head_only) {
 static const char *INDEX_FILES[] = {"index.html", "index.htm", NULL};
 
 static int find_index_file(const char *dir_path, char *index_path, size_t size) {
+    size_t dir_len = strlen(dir_path);
     for (int i = 0; INDEX_FILES[i]; i++) {
+        size_t idx_len = strlen(INDEX_FILES[i]);
+        if (dir_len + 1 + idx_len >= size) {
+            continue;
+        }
         snprintf(index_path, size, "%s/%s", dir_path, INDEX_FILES[i]);
         if (access(index_path, R_OK) == 0) {
             return 0;
@@ -306,11 +325,17 @@ static void send_directory_listing(int fd, const char *dir_path, const char *url
     }
 
     struct dirent *entry;
+    size_t dir_path_len = strlen(dir_path);
     while ((entry = readdir(dir)) != NULL && pos < BUFFER_SIZE * 4 - 256) {
         if (entry->d_name[0] == '.') continue;
 
+        size_t name_len = strlen(entry->d_name);
         char full_path[PATH_MAX];
-        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+        if (dir_path_len + 1 + name_len < sizeof(full_path)) {
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+        } else {
+            continue;
+        }
 
         struct stat st;
         if (stat(full_path, &st) < 0) continue;
@@ -572,7 +597,12 @@ int main(int argc, char **argv) {
         struct client_arg *ca = malloc(sizeof(*ca));
         if (ca) {
             ca->fd = client_fd;
-            strncpy(ca->root_dir, resolved_root, PATH_MAX - 1);
+            size_t root_len = strlen(resolved_root);
+            if (root_len >= PATH_MAX) {
+                root_len = PATH_MAX - 1;
+            }
+            memcpy(ca->root_dir, resolved_root, root_len);
+            ca->root_dir[root_len] = '\0';
             /* coco_go 自动分发到工作线程 */
             coco_go(handle_client, ca);
         } else {
