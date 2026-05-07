@@ -53,19 +53,6 @@ typedef struct {
 
 static volatile sig_atomic_t g_running = 1;
 
-/* 状态码文本 */
-static const char *get_status_text(int code) {
-    switch (code) {
-        case 200: return "OK";
-        case 400: return "Bad Request";
-        case 403: return "Forbidden";
-        case 404: return "Not Found";
-        case 405: return "Method Not Allowed";
-        case 500: return "Internal Server Error";
-        default:  return "Unknown";
-    }
-}
-
 /* URL 解码 */
 static int url_decode(const char *src, char *dst, size_t dst_size) {
     size_t i = 0, j = 0;
@@ -87,6 +74,7 @@ static int url_decode(const char *src, char *dst, size_t dst_size) {
 
 /* 解析 HTTP 请求 */
 static int parse_http_request(const char *buffer, size_t len, http_request_t *req) {
+    (void)len; /* 未使用，保留参数以匹配 API 签名 */
     memset(req, 0, sizeof(*req));
     req->keep_alive = false;
 
@@ -473,6 +461,7 @@ static void handle_client(void *arg) {
     }
 
     close(client_fd);
+    free(ca);
 }
 
 /* 接受连接循环 */
