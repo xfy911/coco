@@ -231,6 +231,7 @@ if(COCO_BUILD_EXAMPLES)
         timer
         select
         priority
+        http_static
     )
 
     foreach(example_name ${EXAMPLES})
