@@ -35,7 +35,6 @@ endif()
 # 源文件
 set(CORE_SOURCES
     src/core/coro.c
-    src/core/sched.c
     src/core/context.c
     src/core/context_api.c
     src/core/context_coro.c
@@ -43,7 +42,6 @@ set(CORE_SOURCES
     src/core/signal.c
     src/core/stack_pool.c
     src/core/stack_pool_multi.c
-    src/core/stack_pool_legacy.c
     src/core/stack_pool_mt.c
     src/core/cancel.c
     src/core/coro_go.c
@@ -51,7 +49,6 @@ set(CORE_SOURCES
     src/core/frame_walker.c
     src/core/stack_grow.c
     src/core/safety.c
-    src/sched/locked_queue.c
     src/sched/safepoint.c
     src/sched/global_sched.c
     src/sched/runq.c
@@ -174,7 +171,6 @@ if(COCO_BUILD_TESTS)
         test_aging_trigger
         test_stack_pool_multi
         test_stack_pool_mt
-        test_locked_queue
         test_safepoint
         test_global_sched
         test_runq

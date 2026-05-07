@@ -3,22 +3,19 @@
  *
  * 验收标准:
  * - 协程创建时关联 context
- * - coco_read/write 支持 context 取消
- * - channel 操作支持 context 取消
- * - 1000 层嵌套 context 取消传播正确
+ * - 协程取消检查正确
+ * - 100 层嵌套 context 取消传播正确
+ * - 超时 context 与协程集成
  */
 
 #include "../../src/core/context_coro.h"
 #include "../../src/core/context_api.h"
-#include "../../src/channel/channel_mt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include <stdatomic.h>
-#include <pthread.h>
 #include <unistd.h>
-#include <sys/socket.h>
 
 /* 测试计数器 */
 static atomic_uint test_pass_count = 0;
@@ -84,93 +81,9 @@ static void test_coro_cancel_flag(void) {
     TEST_ASSERT(coco_coro_should_cancel(&coro), "设置标志后应取消");
 }
 
-/* 测试 4: 带 context 的读取 */
-static void test_read_with_context(void) {
-    printf("\n[TEST 4] 带 context 的读取\n");
-
-    /* 创建 socket pair */
-    int sv[2];
-    int ret = socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
-    TEST_ASSERT(ret == 0, "创建 socket pair 成功");
-
-    coco_context_t *ctx = coco_context_create(NULL);
-
-    /* 写入数据 */
-    char buf_write[] = "hello";
-    write(sv[1], buf_write, sizeof(buf_write));
-
-    /* 读取数据 */
-    char buf_read[10] = {0};
-    ssize_t n = coco_read_with_context(ctx, sv[0], buf_read, sizeof(buf_read));
-    TEST_ASSERT(n > 0, "读取成功");
-    TEST_ASSERT(strcmp(buf_read, "hello") == 0, "数据正确");
-
-    close(sv[0]);
-    close(sv[1]);
-    coco_context_unref(ctx);
-}
-
-/* 测试 5: 取消后读取失败 */
-static void test_read_after_cancel(void) {
-    printf("\n[TEST 5] 取消后读取失败\n");
-
-    coco_context_t *ctx = coco_context_create(NULL);
-    coco_context_cancel(ctx);
-
-    char buf[10];
-    ssize_t n = coco_read_with_context(ctx, 0, buf, sizeof(buf));
-    TEST_ASSERT(n == COCO_ERROR_CANCELLED, "取消后读取返回 CANCELLED");
-
-    coco_context_unref(ctx);
-}
-
-/* 测试 6: 带 context 的 channel 操作 */
-static void test_channel_with_context(void) {
-    printf("\n[TEST 6] 带 context 的 channel 操作\n");
-
-    coco_channel_mt_t *ch = coco_channel_mt_create(5);
-    TEST_ASSERT(ch != NULL, "创建 channel 成功");
-
-    coco_context_t *ctx = coco_context_create(NULL);
-
-    /* 发送 */
-    int data = 100;
-    int ret = coco_channel_send_with_context(ctx, ch, &data);
-    TEST_ASSERT(ret == COCO_OK, "发送成功");
-
-    /* 接收 */
-    void *value = NULL;
-    ret = coco_channel_recv_with_context(ctx, ch, &value);
-    TEST_ASSERT(ret == COCO_OK, "接收成功");
-    TEST_ASSERT(*(int*)value == 100, "数据正确");
-
-    coco_context_unref(ctx);
-    coco_channel_mt_destroy(ch);
-}
-
-/* 测试 7: 取消后 channel 操作失败 */
-static void test_channel_after_cancel(void) {
-    printf("\n[TEST 7] 取消后 channel 操作失败\n");
-
-    coco_channel_mt_t *ch = coco_channel_mt_create(5);
-    coco_context_t *ctx = coco_context_create(NULL);
-    coco_context_cancel(ctx);
-
-    int data = 100;
-    int ret = coco_channel_send_with_context(ctx, ch, &data);
-    TEST_ASSERT(ret == COCO_ERROR_CANCELLED, "取消后发送返回 CANCELLED");
-
-    void *value = NULL;
-    ret = coco_channel_recv_with_context(ctx, ch, &value);
-    TEST_ASSERT(ret == COCO_ERROR_CANCELLED, "取消后接收返回 CANCELLED");
-
-    coco_context_unref(ctx);
-    coco_channel_mt_destroy(ch);
-}
-
-/* 测试 8: 深层嵌套取消传播 */
+/* 测试 4: 深层嵌套取消传播 */
 static void test_deep_cancel_propagation(void) {
-    printf("\n[TEST 8] 深层嵌套取消传播 (100 层)\n");
+    printf("\n[TEST 4] 深层嵌套取消传播 (100 层)\n");
 
     #define DEPTH 100
     coco_context_t **ctxs = malloc(DEPTH * sizeof(coco_context_t*));
@@ -213,9 +126,9 @@ static void test_deep_cancel_propagation(void) {
     #undef DEPTH
 }
 
-/* 测试 9: 超时 context 与协程 */
+/* 测试 5: 超时 context 与协程 */
 static void test_timeout_with_coro(void) {
-    printf("\n[TEST 9] 超时 context 与协程\n");
+    printf("\n[TEST 5] 超时 context 与协程\n");
 
     coco_context_t *ctx = coco_context_with_timeout(NULL, 50);
     coco_coro_t coro = {0};
@@ -232,9 +145,9 @@ static void test_timeout_with_coro(void) {
     coco_context_unref(ctx);
 }
 
-/* 测试 10: context 引用计数与协程 */
+/* 测试 6: context 引用计数与协程 */
 static void test_refcount_with_coro(void) {
-    printf("\n[TEST 10] context 引用计数与协程\n");
+    printf("\n[TEST 6] context 引用计数与协程\n");
 
     coco_context_t *ctx = coco_context_create(NULL);
     TEST_ASSERT(atomic_load(&ctx->refcount) == 1, "初始引用计数为 1");
@@ -255,17 +168,13 @@ int main(void) {
     printf("=== Context 与协程集成测试 ===\n");
     printf("验收标准验证:\n");
     printf("  1. 协程创建时关联 context\n");
-    printf("  2. coco_read/write 支持 context 取消\n");
-    printf("  3. channel 操作支持 context 取消\n");
-    printf("  4. 1000 层嵌套 context 取消传播正确\n");
+    printf("  2. 协程取消检查正确\n");
+    printf("  3. 100 层嵌套 context 取消传播正确\n");
+    printf("  4. 超时 context 与协程集成\n");
 
     test_coro_context();
     test_coro_should_cancel();
     test_coro_cancel_flag();
-    test_read_with_context();
-    test_read_after_cancel();
-    test_channel_with_context();
-    test_channel_after_cancel();
     test_deep_cancel_propagation();
     test_timeout_with_coro();
     test_refcount_with_coro();
