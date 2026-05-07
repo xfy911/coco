@@ -204,6 +204,93 @@ static int validate_path(const char *root_dir, const char *req_path,
     return 0;
 }
 
+/* Content-Type 映射 */
+static const char *get_content_type(const char *path) {
+    const char *ext = strrchr(path, '.');
+    if (!ext) return "application/octet-stream";
+
+    if (strcasecmp(ext, ".html") == 0 || strcasecmp(ext, ".htm") == 0)
+        return "text/html; charset=utf-8";
+    if (strcasecmp(ext, ".css") == 0)
+        return "text/css; charset=utf-8";
+    if (strcasecmp(ext, ".js") == 0)
+        return "application/javascript";
+    if (strcasecmp(ext, ".json") == 0)
+        return "application/json";
+    if (strcasecmp(ext, ".txt") == 0)
+        return "text/plain; charset=utf-8";
+    if (strcasecmp(ext, ".png") == 0)
+        return "image/png";
+    if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0)
+        return "image/jpeg";
+    if (strcasecmp(ext, ".gif") == 0)
+        return "image/gif";
+    if (strcasecmp(ext, ".svg") == 0)
+        return "image/svg+xml";
+    if (strcasecmp(ext, ".ico") == 0)
+        return "image/x-icon";
+    if (strcasecmp(ext, ".pdf") == 0)
+        return "application/pdf";
+    if (strcasecmp(ext, ".zip") == 0)
+        return "application/zip";
+
+    return "application/octet-stream";
+}
+
+/* 发送文件内容（分块传输） */
+static int send_file_content(int fd, const char *file_path, size_t file_size, bool head_only) {
+    if (head_only) return 0;
+
+    FILE *f = fopen(file_path, "rb");
+    if (!f) return -1;
+
+    char chunk[CHUNK_SIZE];
+    size_t sent = 0;
+
+    while (sent < file_size) {
+        size_t to_read = (file_size - sent > CHUNK_SIZE) ? CHUNK_SIZE : (file_size - sent);
+        size_t n = fread(chunk, 1, to_read, f);
+
+        if (n == 0) {
+            fclose(f);
+            return -1;
+        }
+
+        int written = coco_write(fd, chunk, n);
+        if (written < 0) {
+            fclose(f);
+            return -1;
+        }
+
+        sent += n;
+    }
+
+    fclose(f);
+    return 0;
+}
+
+/* 发送文件响应 */
+static int send_file_response(int fd, const char *file_path, bool head_only) {
+    struct stat st;
+    if (stat(file_path, &st) < 0 || !S_ISREG(st.st_mode)) {
+        return -1;
+    }
+
+    http_response_t resp = {
+        .status_code = 200,
+        .status_text = "OK",
+        .content_type = get_content_type(file_path),
+        .content_length = st.st_size
+    };
+
+    char header[512];
+    int header_len = build_response_header(header, sizeof(header), &resp);
+
+    coco_write(fd, header, header_len);
+
+    return send_file_content(fd, file_path, st.st_size, head_only);
+}
+
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
