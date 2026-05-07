@@ -144,6 +144,7 @@ struct coco_coro {
         void *value;               /* 传递的值 */
         bool in_use;               /* 是否在等待队列中 */
         bool freed_by_destroy;     /* destroy 已释放标志 */
+        void *channel;             /* 等待的 channel（用于取消时清理，void* 支持不同 channel 类型） */
     } wait_node;
 
     /* O_NONBLOCK 缓存位图 (FD 0-31) */
@@ -154,6 +155,7 @@ struct coco_coro {
     size_t max_stack_size;              /* Maximum allowed stack size */
     bool stack_growable;                /* Whether stack can grow dynamically */
     size_t current_stack_size;          /* Current stack size (updated on growth) */
+    bool stack_from_pool;               /* True if current stack was allocated from pool */
 
     /* Channel select state (NULL when not in select) */
     coco_select_node_t *select_nodes;

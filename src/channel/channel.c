@@ -21,6 +21,11 @@ struct coco_channel {
     size_t capacity;          /* 缓冲区大小（0 = 无缓冲） */
     int closed;               /* 是否已关闭 */
 
+    /* 引用计数和同步 */
+    _Atomic uint32_t refcount;        /* 引用计数 */
+    pthread_mutex_t wait_queue_lock;  /* 等待队列锁 */
+    _Atomic bool destroying;          /* 正在销毁标志 */
+
     /* 有缓冲 channel: 环形缓冲区 */
     void **buffer;
     size_t head;              /* 读位置 */
@@ -39,6 +44,109 @@ struct coco_channel {
     coco_select_node_t *recv_select_head;
     coco_select_node_t *recv_select_tail;
 };
+
+/* === 引用计数函数 === */
+
+/**
+ * coco_channel_ref - 增加 channel 引用计数
+ *
+ * @param ch channel 指针
+ */
+void coco_channel_ref(coco_channel_t *ch) {
+    if (ch) {
+        atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
+    }
+}
+
+/**
+ * coco_channel_unref - 减少 channel 引用计数，计数为 0 时释放
+ *
+ * @param ch channel 指针
+ * @return true 如果 channel 已释放，false 否则
+ */
+bool coco_channel_unref(coco_channel_t *ch) {
+    if (!ch) {
+        return false;
+    }
+    if (atomic_fetch_sub_explicit(&ch->refcount, 1, memory_order_acq_rel) == 1) {
+        if (ch->buffer) {
+            free(ch->buffer);
+        }
+        pthread_mutex_destroy(&ch->wait_queue_lock);
+        free(ch);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * coco_channel_remove_waiter - 从 channel 等待队列中移除指定协程
+ *
+ * @param ch channel 指针
+ * @param coro 要移除的协程
+ *
+ * 从发送队列或接收队列中移除协程，更新 tail 指针。
+ * 调用者必须持有 wait_queue_lock。
+ */
+void coco_channel_remove_waiter(coco_channel_t *ch, coco_coro_t *coro) {
+    /* 尝试从发送队列移除 */
+    if (ch->send_wait_head == coro) {
+        ch->send_wait_head = coro->wait_node.next_waiter;
+        if (!ch->send_wait_head) {
+            ch->send_wait_tail = NULL;
+        }
+    } else {
+        coco_coro_t *prev = ch->send_wait_head;
+        while (prev && prev->wait_node.next_waiter != coro) {
+            prev = prev->wait_node.next_waiter;
+        }
+        if (prev) {
+            prev->wait_node.next_waiter = coro->wait_node.next_waiter;
+            if (ch->send_wait_tail == coro) {
+                ch->send_wait_tail = prev;
+            }
+        } else {
+            /* 不在发送队列，尝试从接收队列移除 */
+            if (ch->recv_wait_head == coro) {
+                ch->recv_wait_head = coro->wait_node.next_waiter;
+                if (!ch->recv_wait_head) {
+                    ch->recv_wait_tail = NULL;
+                }
+            } else {
+                prev = ch->recv_wait_head;
+                while (prev && prev->wait_node.next_waiter != coro) {
+                    prev = prev->wait_node.next_waiter;
+                }
+                if (prev) {
+                    prev->wait_node.next_waiter = coro->wait_node.next_waiter;
+                    if (ch->recv_wait_tail == coro) {
+                        ch->recv_wait_tail = prev;
+                    }
+                }
+            }
+        }
+    }
+    coro->wait_node.in_use = false;
+    coro->wait_node.next_waiter = NULL;
+    coro->wait_node.channel = NULL;
+}
+
+/**
+ * coco_channel_cancel_cleanup - 取消时清理 channel 等待
+ *
+ * @param ch channel 指针
+ * @param coro 要取消的协程
+ *
+ * 持锁从等待队列移除协程并减少引用计数。
+ */
+void coco_channel_cancel_cleanup(coco_channel_t *ch, coco_coro_t *coro) {
+    pthread_mutex_lock(&ch->wait_queue_lock);
+    if (coro->wait_node.in_use && coro->wait_node.channel == ch) {
+        coco_channel_remove_waiter(ch, coro);
+        coco_channel_unref(ch);
+    }
+    pthread_mutex_unlock(&ch->wait_queue_lock);
+}
 
 /* === Select 协程等待队列操作 === */
 
@@ -98,6 +206,8 @@ static void remove_select_node(coco_select_node_t **head, coco_select_node_t **t
 typedef struct {
     coco_sched_t *sched;
     coco_coro_t *coro;
+    _Atomic bool callback_executed;
+    _Atomic bool callback_done;
 } select_timeout_arg_t;
 
 /* 从所有 select 注册的 channel 等待队列中移除协程 */
@@ -122,8 +232,17 @@ static void select_dequeue_all(coco_coro_t *coro) {
 static void cancel_select_timer(coco_coro_t *coro) {
     if (coro->select_timer) {
         select_timeout_arg_t *ta = (select_timeout_arg_t *)coro->select_timer->arg;
-        coco_timer_cancel(coro->select_timer);
-        free(ta);
+        /* Try to claim execution right - if callback already started, wait for it */
+        if (atomic_exchange(&ta->callback_executed, true)) {
+            /* Callback already running, wait for completion */
+            while (!atomic_load(&ta->callback_done)) {
+                /* Spin wait - callback should complete quickly */
+            }
+        } else {
+            /* We got execution right, cancel timer and free */
+            coco_timer_cancel(coro->select_timer);
+            free(ta);
+        }
         coro->select_timer = NULL;
     }
 }
@@ -143,6 +262,11 @@ void coco_select_cleanup(coco_coro_t *coro) {
 /* select 超时回调 */
 static void select_timeout_cb(void *arg) {
     select_timeout_arg_t *ta = (select_timeout_arg_t *)arg;
+    /* Try to claim execution right - if cancel already claimed, return */
+    if (atomic_exchange(&ta->callback_executed, true)) {
+        /* Cancel already claimed execution, do nothing */
+        return;
+    }
     coco_coro_t *coro = ta->coro;
     coco_sched_t *sched = ta->sched;
     if (coro->select_nodes && coro->select_ready_index == -1) {
@@ -151,6 +275,7 @@ static void select_timeout_cb(void *arg) {
         coro->select_timer = NULL;
         enqueue_ready(sched, coro);
     }
+    atomic_store(&ta->callback_done, true);
     free(ta);
 }
 
@@ -169,10 +294,19 @@ coco_channel_t *coco_channel_create(size_t capacity) {
     ch->capacity = capacity;
     ch->closed = 0;
 
+    /* 初始化引用计数和同步字段 */
+    atomic_init(&ch->refcount, 1);
+    atomic_init(&ch->destroying, false);
+    if (pthread_mutex_init(&ch->wait_queue_lock, NULL) != 0) {
+        free(ch);
+        return NULL;
+    }
+
     if (capacity > 0) {
         /* 有缓冲 channel: 分配环形缓冲区 */
         ch->buffer = calloc(capacity, sizeof(void*));
         if (!ch->buffer) {
+            pthread_mutex_destroy(&ch->wait_queue_lock);
             free(ch);
             return NULL;
         }
@@ -245,19 +379,36 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
         return COCO_ERROR;  /* 协程已在等待队列中 */
     }
 
+    /* 检查是否正在销毁 */
+    if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+        return COCO_ERROR_CHANNEL_CLOSED;
+    }
+
+    /* 持锁增加引用计数并入队等待 */
+    pthread_mutex_lock(&ch->wait_queue_lock);
+    if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+        pthread_mutex_unlock(&ch->wait_queue_lock);
+        return COCO_ERROR_CHANNEL_CLOSED;
+    }
+    atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
     coro->wait_node.value = value;
     coro->wait_node.freed_by_destroy = false;
-    enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro);
+    enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro, ch);
+    pthread_mutex_unlock(&ch->wait_queue_lock);
+
     coro->state = COCO_STATE_WAITING;
     coco_yield();
+
+    /* 减少引用计数 */
+    coco_channel_unref(ch);
 
     /* 检查是否被取消 */
     if (coro->cancelled) {
         return COCO_ERROR_CANCELLED;
     }
 
-    /* 恢复后检查 channel 是否关闭 */
-    if (ch->closed) {
+    /* 恢复后检查 channel 是否关闭或被销毁 */
+    if (coro->wait_node.freed_by_destroy || ch->closed) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -361,18 +512,39 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
         return COCO_ERROR;  /* 协程已在等待队列中 */
     }
 
+    /* 检查是否正在销毁 */
+    if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+        return COCO_ERROR_CHANNEL_CLOSED;
+    }
+
+    /* 持锁增加引用计数并入队等待 */
+    pthread_mutex_lock(&ch->wait_queue_lock);
+    if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+        pthread_mutex_unlock(&ch->wait_queue_lock);
+        return COCO_ERROR_CHANNEL_CLOSED;
+    }
+    atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
     coro->wait_node.value = NULL;
     coro->wait_node.freed_by_destroy = false;
-    enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro);
+    enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro, ch);
+    pthread_mutex_unlock(&ch->wait_queue_lock);
+
     coro->state = COCO_STATE_WAITING;
     coco_yield();
+
+    /* 减少引用计数 */
+    coco_channel_unref(ch);
 
     /* 检查是否被取消 */
     if (coro->cancelled) {
         return COCO_ERROR_CANCELLED;
     }
 
-    /* 恢复后获取值 */
+    /* 恢复后获取值，检查是否被销毁 */
+    if (coro->wait_node.freed_by_destroy) {
+        return COCO_ERROR_CHANNEL_CLOSED;
+    }
+
     if (ch->closed && !coro->wait_node.value) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
@@ -632,14 +804,26 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
     if (timeout_ms > 0) {
         select_timeout_arg_t *ta = malloc(sizeof(select_timeout_arg_t));
         if (!ta) {
-            /* Allocation failed — proceed without timeout */
-        } else {
-            ta->sched = sched;
-            ta->coro = coro;
-            coro->select_timer = coco_timer_ex(sched, timeout_ms, select_timeout_cb, ta);
-            if (!coro->select_timer) {
-                free(ta);
-            }
+            /* H7: 分配失败时清理已注册的 select 节点 */
+            select_dequeue_all(coro);
+            free(nodes);
+            coro->select_nodes = NULL;
+            coro->select_case_count = 0;
+            return COCO_ERROR_NOMEM;
+        }
+        ta->sched = sched;
+        ta->coro = coro;
+        atomic_init(&ta->callback_executed, false);
+        atomic_init(&ta->callback_done, false);
+        coro->select_timer = coco_timer_ex(sched, timeout_ms, select_timeout_cb, ta);
+        if (!coro->select_timer) {
+            /* H7: 定时器创建失败时清理 */
+            free(ta);
+            select_dequeue_all(coro);
+            free(nodes);
+            coro->select_nodes = NULL;
+            coro->select_case_count = 0;
+            return COCO_ERROR_NOMEM;
         }
     }
 
@@ -689,47 +873,70 @@ void coco_channel_destroy(coco_channel_t *ch) {
         return;
     }
 
-    if (ch->buffer) {
-        free(ch->buffer);
-    }
+    /* 设置销毁标志，防止新的等待者入队 */
+    atomic_store_explicit(&ch->destroying, true, memory_order_release);
 
-    /* 清理普通等待队列，设置 freed_by_destroy 标志 */
+    coco_sched_t *sched = g_current_sched;
+
+    /* 持锁排空等待队列 */
+    pthread_mutex_lock(&ch->wait_queue_lock);
+
+    /* 清理普通等待队列，设置 freed_by_destroy 标志并唤醒 */
     while (ch->send_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (coro) {
             coro->wait_node.freed_by_destroy = true;
+            if (sched) {
+                enqueue_ready(sched, coro);
+            }
         }
     }
     while (ch->recv_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (coro) {
             coro->wait_node.freed_by_destroy = true;
+            if (sched) {
+                enqueue_ready(sched, coro);
+            }
         }
     }
 
-    /* 清理 select 等待队列 */
+    /* 清理 select 等待队列，清除 chan 指针避免悬空引用 (H5) */
     while (ch->send_select_head) {
         coco_select_node_t *node = dequeue_select_node(&ch->send_select_head,
                                                        &ch->send_select_tail);
         if (node && node->coro) {
+            node->chan = NULL;  /* 清除悬空指针 (H5) */
             coco_coro_t *sel_coro = node->coro;
             if (sel_coro->select_ready_index == -1) {
                 sel_coro->select_ready_index = node->case_index;
+                select_dequeue_all(sel_coro);
+                cancel_select_timer(sel_coro);
+                if (sched) {
+                    enqueue_ready(sched, sel_coro);
+                }
             }
-            /* Note: remaining nodes in this select will be cleaned up
-             * when the coro resumes and processes its select state */
         }
     }
     while (ch->recv_select_head) {
         coco_select_node_t *node = dequeue_select_node(&ch->recv_select_head,
                                                        &ch->recv_select_tail);
         if (node && node->coro) {
+            node->chan = NULL;  /* 清除悬空指针 (H5) */
             coco_coro_t *sel_coro = node->coro;
             if (sel_coro->select_ready_index == -1) {
                 sel_coro->select_ready_index = node->case_index;
+                select_dequeue_all(sel_coro);
+                cancel_select_timer(sel_coro);
+                if (sched) {
+                    enqueue_ready(sched, sel_coro);
+                }
             }
         }
     }
 
-    free(ch);
+    pthread_mutex_unlock(&ch->wait_queue_lock);
+
+    /* 通过 unref 释放，等待者恢复后会调用 unref 减少引用计数 */
+    coco_channel_unref(ch);
 }

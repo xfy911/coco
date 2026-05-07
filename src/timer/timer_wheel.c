@@ -281,21 +281,20 @@ void coco_timer_cancel(coco_timer_t *timer) {
     } else {
         /* timer 是链表头，需要更新时间轮槽位 */
         coco_timer_wheel_t *tw = g_timer_wheel;
-        if (tw) {
-            switch (timer->level) {
-                case 1:
-                    tw->w1[timer->slot] = timer->next;
-                    break;
-                case 2:
-                    tw->w2[timer->slot] = timer->next;
-                    break;
-                case 3:
-                    tw->w3[timer->slot] = timer->next;
-                    break;
-                case 4:
-                    tw->w4[timer->slot] = timer->next;
-                    break;
-            }
+        if (!tw) return;  /* H6: NULL 检查 */
+        switch (timer->level) {
+            case 1:
+                tw->w1[timer->slot] = timer->next;
+                break;
+            case 2:
+                tw->w2[timer->slot] = timer->next;
+                break;
+            case 3:
+                tw->w3[timer->slot] = timer->next;
+                break;
+            case 4:
+                tw->w4[timer->slot] = timer->next;
+                break;
         }
     }
 

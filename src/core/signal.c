@@ -7,6 +7,7 @@
 
 #include "../coco_internal.h"
 #include "../../include/coco_stack_grow.h"
+#include "stack_pool.h"
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,7 +120,9 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     coco_grow_info_t grow_info = coco_grow_stack(
         &coro->ctx,
         g_current_stack_map,  /* Use loaded stack map for pointer adjustment (Phase 11) */
-        (uintptr_t)coro->ctx.sp
+        (uintptr_t)coro->ctx.sp,
+        coro->stack_from_pool,
+        g_overflow_sched->stack_pool
     );
 
     if (grow_info.result != COCO_GROW_OK) {
@@ -136,6 +139,7 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     coro->stack_base = (void*)grow_info.new_base;
     coro->stack_size = grow_info.new_size;
     coro->stack_top = (void*)grow_info.new_limit;  /* 栈顶 = 新上限 */
+    coro->stack_from_pool = false;  /* 新栈是直接 mmap 分配的 */
 
     /* ctx 已由 coco_grow_stack 更新，再次同步确保一致性 */
     coro->ctx.stack_base = (void*)grow_info.new_base;

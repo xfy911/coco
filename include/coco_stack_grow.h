@@ -17,6 +17,7 @@
 
 /* Forward declaration */
 struct coco_ctx;
+struct stack_pool;
 
 #ifdef __cplusplus
 extern "C" {
@@ -100,12 +101,16 @@ size_t coco_calc_new_stack_size(size_t current_size);
  * @param ctx The coroutine context to grow
  * @param stack_map The loaded stack map for pointer identification
  * @param current_sp Current stack pointer (from saved context or signal)
+ * @param stack_from_pool Whether the old stack was allocated from pool
+ * @param stack_pool The stack pool to return old stack to (if from pool), or NULL
  * @return Growth information structure
  */
 coco_grow_info_t coco_grow_stack(
     struct coco_ctx* ctx,
     const coco_stack_map_t* stack_map,
-    uintptr_t current_sp
+    uintptr_t current_sp,
+    bool stack_from_pool,
+    struct stack_pool* stack_pool
 );
 
 /**

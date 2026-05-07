@@ -4,6 +4,23 @@
  * M:N 多线程调度架构，参考 Go runtime 设计。
  */
 
+/*
+ * 锁获取顺序 (从高层级到低层级):
+ *
+ * 层级 1: global_runq_lock (全局运行队列)
+ * 层级 2: idle_lock (空闲等待，仅 worker_loop 使用)
+ * 层级 3: channel.wait_queue_lock (Channel 等待队列操作)
+ * 层级 4: local_runq_lock (Per-P 本地运行队列)
+ *
+ * 规则:
+ * - 永远不要在持有低层级锁时获取高层级锁
+ * - Channel 唤醒协程时: 先释放 wait_queue_lock，再获取 local_runq_lock
+ * - 空闲等待时: 持 idle_lock 检查运行队列，不获取其他锁
+ *
+ * 特殊情况:
+ * - destroy 时可持 wait_queue_lock 排空队列，不唤醒协程
+ */
+
 #ifndef GLOBAL_SCHED_H
 #define GLOBAL_SCHED_H
 
@@ -16,6 +33,8 @@
 /* 前向声明 */
 struct coco_processor;
 struct coco_machine;
+struct coco_timer_wheel;
+struct coco_sched;
 
 /* 全局调度器 */
 typedef struct coco_global_sched {
@@ -37,6 +56,9 @@ typedef struct coco_global_sched {
     /* 空闲 M 列表 */
     struct coco_machine *idle_machines;
     pthread_cond_t idle_cond;
+
+    /* 主调度器 (用于定时器唤醒) */
+    struct coco_sched *main_sched;
 
     /* 统计信息 */
     _Atomic uint64_t total_coroutines;
@@ -65,6 +87,12 @@ typedef struct coco_processor {
 
     /* 栈池 (Per-P，避免竞争) */
     void *stack_pool;  /* stack_pool_multi_t* */
+
+    /* Per-P 时间轮 */
+    struct coco_timer_wheel *timer_wheel;
+
+    /* 反向引用全局调度器 */
+    struct coco_global_sched *global_sched;
 
     /* 状态 */
     _Atomic enum {

@@ -3,6 +3,7 @@
  */
 
 #include "../coco_internal.h"
+#include "../channel/channel_common.h"
 #include <stdlib.h>
 
 /* 外部全局变量（在 coro.c 中定义，使用 TLS） */
@@ -37,6 +38,14 @@ int coco_cancel(coco_coro_t *coro) {
             coco_poll_unregister(sched, coro->wait_fd);
             coro->wait_fd = -1;
         }
+
+        /* 清除 channel 等待队列 */
+        if (coro->wait_node.in_use && coro->wait_node.channel) {
+            /* channel 字段是 void*，需要使用 coco_channel_cancel_cleanup */
+            /* 该函数内部会检查是否是有效的 coco_channel_t */
+            coco_channel_cancel_cleanup((coco_channel_t *)coro->wait_node.channel, coro);
+        }
+
         enqueue_ready(sched, coro);
     }
 

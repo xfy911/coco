@@ -46,6 +46,17 @@ coco_processor_t *coco_processor_create(uint32_t id) {
         return NULL;
     }
 
+    /* 创建 Per-P 时间轮 */
+    p->timer_wheel = coco_timer_wheel_create();
+    if (!p->timer_wheel) {
+        stack_pool_multi_destroy(p->stack_pool);
+        pthread_mutex_destroy(&p->local_runq_lock);
+        free(p);
+        return NULL;
+    }
+
+    p->global_sched = NULL;
+
     atomic_init(&p->status, P_IDLE);
     p->next = NULL;
 
@@ -62,6 +73,10 @@ void coco_processor_destroy(coco_processor_t *p) {
 
     if (p->stack_pool) {
         stack_pool_multi_destroy(p->stack_pool);
+    }
+
+    if (p->timer_wheel) {
+        coco_timer_wheel_destroy(p->timer_wheel);
     }
 
     free(p);
@@ -93,7 +108,7 @@ void coco_machine_destroy(coco_machine_t *m) {
 /* 全局初始化 */
 int coco_global_init(uint32_t num_procs) {
     if (g_global_sched != NULL) {
-        return -1;  /* 已初始化 */
+        return COCO_ERROR;  /* 已初始化 */
     }
 
     if (num_procs == 0) {
@@ -102,7 +117,7 @@ int coco_global_init(uint32_t num_procs) {
 
     g_global_sched = calloc(1, sizeof(coco_global_sched_t));
     if (!g_global_sched) {
-        return -1;
+        return COCO_ERROR;
     }
 
     /* 初始化处理器数组 */
@@ -110,7 +125,7 @@ int coco_global_init(uint32_t num_procs) {
     if (!g_global_sched->processors) {
         free(g_global_sched);
         g_global_sched = NULL;
-        return -1;
+        return COCO_ERROR;
     }
 
     g_global_sched->processor_count = num_procs;
@@ -127,8 +142,10 @@ int coco_global_init(uint32_t num_procs) {
             free(g_global_sched->processors);
             free(g_global_sched);
             g_global_sched = NULL;
-            return -1;
+            return COCO_ERROR;
         }
+        /* 设置反向引用 */
+        g_global_sched->processors[i]->global_sched = g_global_sched;
     }
 
     /* 初始化全局队列 */
@@ -183,7 +200,7 @@ coco_global_sched_t *coco_global_get(void) {
 /* 全局队列入队 */
 int coco_global_runq_put(struct coco_coro *g) {
     if (!g_global_sched || !g) {
-        return -1;
+        return COCO_ERROR;
     }
 
     pthread_mutex_lock(&g_global_sched->global_runq_lock);
@@ -271,6 +288,9 @@ static void *worker_loop(void *arg) {
     g_return_ctx = &p->m->ctx;
 
     while (atomic_load(&gs->running)) {
+        /* 处理定时器 tick */
+        coco_timer_tick(p->timer_wheel, gs->main_sched);
+
         coco_coro_t *coro = find_runnable(p);
         if (coro) {
             atomic_store(&p->curcoro, coro);
@@ -284,13 +304,39 @@ static void *worker_loop(void *arg) {
                 atomic_fetch_sub(&gs->active_coroutines, 1);
             }
         } else {
-            /* Idle wait */
+            /* Idle wait - 持锁重检查避免丢失唤醒 (H2) */
             pthread_mutex_lock(&gs->idle_lock);
             if (!atomic_load(&gs->running)) {
                 pthread_mutex_unlock(&gs->idle_lock);
                 break;
             }
-            pthread_cond_wait(&gs->idle_cond, &gs->idle_lock);
+            /* H2 fix: 持锁重检查 find_runnable，避免唤醒信号丢失 */
+            coro = find_runnable(p);
+            if (coro) {
+                pthread_mutex_unlock(&gs->idle_lock);
+                atomic_store(&p->curcoro, coro);
+                g_current_coro = coro;
+                coco_ctx_switch(&p->m->ctx, &coro->ctx);
+                g_current_coro = NULL;
+                atomic_store(&p->curcoro, NULL);
+                if (coro->state == COCO_STATE_DEAD) {
+                    atomic_fetch_sub(&gs->active_coroutines, 1);
+                }
+                continue;
+            }
+            /* 计算定时器超时 */
+            uint64_t next_expire = coco_timer_wheel_next_expire(p->timer_wheel);
+            struct timespec ts;
+            if (next_expire > 0) {
+                uint64_t now_ms = get_current_time_ms_internal();
+                uint64_t wait_ms = (next_expire > now_ms) ? (next_expire - now_ms) : 1;
+                ts.tv_sec = wait_ms / 1000;
+                ts.tv_nsec = (wait_ms % 1000) * 1000000;
+                pthread_cond_timedwait(&gs->idle_cond, &gs->idle_lock, &ts);
+            } else {
+                /* 无定时器，无限等待 */
+                pthread_cond_wait(&gs->idle_cond, &gs->idle_lock);
+            }
             pthread_mutex_unlock(&gs->idle_lock);
         }
     }
@@ -312,6 +358,12 @@ int coco_global_sched_start(uint32_t num_workers) {
         return COCO_ERROR_INVALID;  /* Already running */
     }
 
+    /* 创建主调度器 (用于定时器唤醒协程) */
+    gs->main_sched = coco_sched_create();
+    if (!gs->main_sched) {
+        return COCO_ERROR_NOMEM;
+    }
+
     atomic_store(&gs->running, true);
     atomic_init(&gs->next_coro_id, 0);
 
@@ -320,6 +372,8 @@ int coco_global_sched_start(uint32_t num_workers) {
         coco_processor_t *p = gs->processors[i];
         coco_machine_t *m = coco_machine_create(i);
         if (!m) {
+            coco_sched_destroy(gs->main_sched);
+            gs->main_sched = NULL;
             atomic_store(&gs->running, false);
             return COCO_ERROR_NOMEM;
         }
@@ -334,6 +388,8 @@ int coco_global_sched_start(uint32_t num_workers) {
         if (pthread_create(&m->thread, NULL, worker_loop, p) != 0) {
             coco_machine_destroy(m);
             p->m = NULL;
+            coco_sched_destroy(gs->main_sched);
+            gs->main_sched = NULL;
             atomic_store(&gs->running, false);
             return COCO_ERROR;
         }
@@ -382,6 +438,12 @@ int coco_global_sched_stop(void) {
             p->m = NULL;
             atomic_store(&p->status, P_IDLE);
         }
+    }
+
+    /* Destroy main scheduler */
+    if (gs->main_sched) {
+        coco_sched_destroy(gs->main_sched);
+        gs->main_sched = NULL;
     }
 
     return COCO_OK;

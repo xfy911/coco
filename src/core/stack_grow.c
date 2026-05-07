@@ -8,6 +8,7 @@
 #include "coco_stack_grow.h"
 #include "coco_stack_map.h"
 #include "coco_frame_walker.h"
+#include "stack_pool.h"
 #include "../coco_internal.h"
 
 #include <stdlib.h>
@@ -181,7 +182,9 @@ static bool adjust_frames_visitor(
 coco_grow_info_t coco_grow_stack(
     struct coco_ctx* ctx,
     const coco_stack_map_t* stack_map,
-    uintptr_t current_sp
+    uintptr_t current_sp,
+    bool stack_from_pool,
+    stack_pool_t* stack_pool
 ) {
     coco_grow_info_t info = {0};
 
@@ -279,13 +282,20 @@ coco_grow_info_t coco_grow_stack(
     info.frames_adjusted = 0;  // Would need frame walk to count
     info.result = COCO_GROW_OK;
 
-    // Free old stack (if it was mmap'd, not from pool)
-    // New stacks are mmap'd with guard page, so we can munmap the old one
+    // Free old stack
+    // If old stack was from pool, return it to pool; otherwise munmap
     if (info.old_base != 0) {
-        size_t page_size = sysconf(_SC_PAGESIZE);
-        void* old_stack_start = (void*)(info.old_base - page_size);  // Include guard page
-        size_t old_total_size = info.old_size + page_size;
-        munmap(old_stack_start, old_total_size);
+        if (stack_from_pool && stack_pool) {
+            // Return old stack to pool
+            // old_limit is the stack top, old_size is the size
+            stack_pool_free(stack_pool, (void*)info.old_limit, info.old_size);
+        } else {
+            // Old stack was directly mmap'd, munmap it
+            size_t page_size = sysconf(_SC_PAGESIZE);
+            void* old_stack_start = (void*)(info.old_base - page_size);  // Include guard page
+            size_t old_total_size = info.old_size + page_size;
+            munmap(old_stack_start, old_total_size);
+        }
     }
 
     return info;

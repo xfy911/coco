@@ -432,6 +432,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     }
     coro->stack_base = (void*)((uintptr_t)coro->stack_top - stack_size - 4096);
     coro->stack_size = stack_size;
+    coro->stack_from_pool = true;  /* 标记栈来自池 */
 
     /* 初始化上下文 */
     coco_ctx_init(&coro->ctx, coro->stack_top, coro_entry_wrapper, arg);
@@ -511,10 +512,11 @@ void coco_destroy(coco_coro_t *coro) {
 
     if (coro->stack_base) {
         coco_sched_t *sched = g_current_sched;
-        if (sched && sched->stack_pool) {
+        if (coro->stack_from_pool && sched && sched->stack_pool) {
+            /* 栈来自池，归还给池 */
             stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
         } else {
-            /* Fallback: 无调度器时直接释放内存 */
+            /* 栈是直接 mmap 分配的（增长后或无池），直接 munmap */
             coco_stack_free(coro->stack_top, coro->stack_size);
         }
         coro->stack_base = NULL;
