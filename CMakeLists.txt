@@ -228,6 +228,9 @@ if(COCO_BUILD_EXAMPLES)
         echo_server
         pipeline
         memory_test
+        timer
+        select
+        priority
     )
 
     foreach(example_name ${EXAMPLES})

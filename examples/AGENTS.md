@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-28 | Updated: 2026-04-28 -->
+<!-- Generated: 2026-04-28 | Updated: 2026-05-07 -->
 
 # examples
 
@@ -10,9 +10,12 @@ Usage examples demonstrating the coco coroutine library API and common patterns.
 | File | Description |
 |------|-------------|
 | `basic.c` | Basic coroutine creation, yielding, and scheduler usage |
-| `channel.c` | Channel-based producer-consumer communication between coroutines |
+| `pipeline.c` | Channel-based producer-consumer pipeline pattern |
 | `echo_server.c` | Async TCP echo server using I/O multiplexing and coroutines |
-| `timer.c` | Timer and sleep usage with coroutine scheduling |
+| `memory_test.c` | Memory usage and stack telemetry benchmarks |
+| `timer.c` | Timer and delayed execution examples |
+| `select.c` | Channel select (multiplexing) example |
+| `priority.c` | Coroutine priority scheduling example |
 
 ## Subdirectories
 None.
@@ -29,10 +32,11 @@ None.
 - Examples should not require external dependencies beyond the coco library
 
 ### Common Patterns
-- `coco_spawn()` to create coroutines
+- `coco_create()` to create coroutines
 - `coco_sched_run()` to start the scheduler
 - `coco_channel_create()` / `coco_channel_send()` / `coco_channel_recv()` for communication
-- `coco_sleep()` / `coco_timer_after()` for timed operations
+- `coco_sleep()` / `coco_timer()` for timed operations
+- `coco_channel_select()` for multiplexing multiple channels
 
 ## Dependencies
 
@@ -41,5 +45,3 @@ None.
 
 ### External
 - CMake (built via top-level CMakeLists.txt)
-
-<!-- MANUAL: Custom project notes can be added below -->
