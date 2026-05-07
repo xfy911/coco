@@ -54,6 +54,7 @@ typedef struct {
 
 static volatile sig_atomic_t g_running = 1;
 static int g_listen_fd = -1;
+static struct accept_arg *g_accept_arg = NULL;
 
 /* URL 解码 */
 static int url_decode(const char *src, char *dst, size_t dst_size) {
@@ -464,6 +465,7 @@ struct accept_arg {
     coco_sched_t *sched;
     int listen_fd;
     char root_dir[PATH_MAX];
+    coco_coro_t *coro;  /* 保存协程句柄用于取消 */
 };
 
 static int set_nonblock(int fd);
@@ -473,6 +475,7 @@ static void accept_loop(void *arg) {
     coco_sched_t *sched = aa->sched;
     int listen_fd = aa->listen_fd;
     const char *root_dir = aa->root_dir;
+    aa->coro = coco_self();  /* 保存协程句柄 */
 
     while (g_running) {
         struct sockaddr_in client_addr;
@@ -480,6 +483,7 @@ static void accept_loop(void *arg) {
 
         int client_fd = coco_accept(listen_fd, &client_addr, &addrlen);
         if (client_fd < 0) {
+            if (!g_running) break;  /* 被信号中断 */
             continue;
         }
 
@@ -505,6 +509,10 @@ static void signal_handler(int sig) {
     if (g_listen_fd >= 0) {
         close(g_listen_fd);
         g_listen_fd = -1;
+    }
+    /* 取消 accept 协程 */
+    if (g_accept_arg && g_accept_arg->coro) {
+        coco_cancel(g_accept_arg->coro);
     }
 }
 
@@ -609,7 +617,9 @@ int main(int argc, char **argv) {
     }
     aa->sched = sched;
     aa->listen_fd = listen_fd;
+    aa->coro = NULL;
     strncpy(aa->root_dir, resolved_root, PATH_MAX - 1);
+    g_accept_arg = aa;  /* 保存全局引用 */
     coco_create(sched, accept_loop, aa, 0);
 
     coco_sched_run(sched);
