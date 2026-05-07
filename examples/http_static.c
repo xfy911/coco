@@ -380,6 +380,140 @@ static void send_directory_listing(int fd, const char *dir_path, const char *url
     free(body);
 }
 
+/* 客户端连接参数 */
+struct client_arg {
+    coco_sched_t *sched;
+    int fd;
+    char root_dir[PATH_MAX];
+};
+
+/* 处理请求路径 */
+static void serve_path(int fd, const char *root_dir, const char *req_path, bool head_only) {
+    char safe_path[PATH_MAX];
+    int valid = validate_path(root_dir, req_path, safe_path, sizeof(safe_path));
+
+    if (valid == 403) {
+        send_error_response(fd, 403, "Forbidden");
+        return;
+    }
+    if (valid == 500) {
+        send_error_response(fd, 500, "Internal Server Error");
+        return;
+    }
+
+    struct stat st;
+    if (stat(safe_path, &st) < 0) {
+        send_error_response(fd, 404, "Not Found");
+        return;
+    }
+
+    if (S_ISREG(st.st_mode)) {
+        /* 普通文件 */
+        if (send_file_response(fd, safe_path, head_only) < 0) {
+            send_error_response(fd, 500, "Internal Server Error");
+        }
+    } else if (S_ISDIR(st.st_mode)) {
+        /* 目录 */
+        char index_path[PATH_MAX];
+        if (find_index_file(safe_path, index_path, sizeof(index_path)) == 0) {
+            /* 找到索引文件 */
+            if (send_file_response(fd, index_path, head_only) < 0) {
+                send_error_response(fd, 500, "Internal Server Error");
+            }
+        } else {
+            /* 生成目录列表 */
+            send_directory_listing(fd, safe_path, req_path, head_only);
+        }
+    } else {
+        send_error_response(fd, 403, "Forbidden");
+    }
+}
+
+/* 处理客户端连接 */
+static void handle_client(void *arg) {
+    struct client_arg *ca = arg;
+    int client_fd = ca->fd;
+    const char *root_dir = ca->root_dir;
+    char buffer[BUFFER_SIZE];
+
+    while (g_running) {
+        /* 读取请求 */
+        int n = coco_read(client_fd, buffer, sizeof(buffer) - 1);
+        if (n <= 0) break;
+
+        buffer[n] = '\0';
+
+        /* 解析请求 */
+        http_request_t req;
+        if (parse_http_request(buffer, n, &req) < 0) {
+            send_error_response(client_fd, 400, "Bad Request");
+            break;
+        }
+
+        /* 只支持 GET 和 HEAD */
+        if (strcmp(req.method, "GET") != 0 && strcmp(req.method, "HEAD") != 0) {
+            send_error_response(client_fd, 405, "Method Not Allowed");
+            if (!req.keep_alive) break;
+            continue;
+        }
+
+        /* URL 解码 */
+        char decoded_path[MAX_PATH];
+        if (url_decode(req.path, decoded_path, sizeof(decoded_path)) < 0) {
+            send_error_response(client_fd, 400, "Bad Request");
+            break;
+        }
+
+        /* 服务请求 */
+        serve_path(client_fd, root_dir, decoded_path,
+                   strcmp(req.method, "HEAD") == 0);
+
+        /* 检查 keep-alive */
+        if (!req.keep_alive) break;
+    }
+
+    close(client_fd);
+}
+
+/* 接受连接循环 */
+struct accept_arg {
+    coco_sched_t *sched;
+    int listen_fd;
+    char root_dir[PATH_MAX];
+};
+
+static int set_nonblock(int fd);
+
+static void accept_loop(void *arg) {
+    struct accept_arg *aa = arg;
+    coco_sched_t *sched = aa->sched;
+    int listen_fd = aa->listen_fd;
+    const char *root_dir = aa->root_dir;
+
+    while (g_running) {
+        struct sockaddr_in client_addr;
+        size_t addrlen = sizeof(client_addr);
+
+        int client_fd = coco_accept(listen_fd, &client_addr, &addrlen);
+        if (client_fd < 0) {
+            continue;
+        }
+
+        set_nonblock(client_fd);
+
+        /* 为每个客户端创建新协程 */
+        struct client_arg *ca = malloc(sizeof(*ca));
+        if (ca) {
+            ca->sched = sched;
+            ca->fd = client_fd;
+            strncpy(ca->root_dir, root_dir, PATH_MAX - 1);
+            coco_create(sched, handle_client, ca, 0);
+        } else {
+            close(client_fd);
+        }
+    }
+}
+
 static void signal_handler(int sig) {
     (void)sig;
     g_running = 0;
@@ -474,7 +608,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* TODO: Add accept loop coroutine */
+    /* 启动 accept 协程 */
+    struct accept_arg *aa = malloc(sizeof(*aa));
+    if (!aa) {
+        fprintf(stderr, "Failed to allocate accept arg\n");
+        coco_sched_destroy(sched);
+        close(listen_fd);
+        return 1;
+    }
+    aa->sched = sched;
+    aa->listen_fd = listen_fd;
+    strncpy(aa->root_dir, resolved_root, PATH_MAX - 1);
+    coco_create(sched, accept_loop, aa, 0);
 
     coco_sched_run(sched);
 
