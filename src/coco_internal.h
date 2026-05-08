@@ -162,6 +162,10 @@ struct coco_coro {
     int select_case_count;
     int select_ready_index;           /* -1 = none ready, -2 = timeout, -3 = default */
     coco_timer_t *select_timer;       /* Timer for select timeout (NULL if none) */
+
+    /* Time-slice fairness (Phase 2) */
+    uint64_t runtime_start_ns;        /* 当前运行周期开始时间（纳秒） */
+    bool time_slice_expired;          /* 时间片已到期标志 */
 };
 
 /* 时间轮结构（前置声明） */
@@ -258,6 +262,10 @@ struct coco_sched {
     /* 老化配置 */
     uint64_t aging_threshold_ms;  /* 老化阈值（等待多久后提升优先级） */
 
+    /* Time-slice fairness (Phase 2) */
+    uint64_t time_slice_ns;       /* 时间片长度（纳秒），默认 10ms */
+    bool fairness_enabled;        /* 是否启用公平调度 */
+
     /* Stack map for dynamic stack growth (Phase 11) */
     struct coco_stack_map *stack_map;  /* Loaded stack map for pointer adjustment */
 };
@@ -284,6 +292,9 @@ coco_timer_t *coco_timer_add(coco_timer_wheel_t *tw, uint64_t delay_ms, coco_cor
 void coco_timer_tick(coco_timer_wheel_t *tw, coco_sched_t *sched);
 uint64_t coco_timer_wheel_next_expire(coco_timer_wheel_t *tw);
 uint64_t get_current_time_ms_internal(void);
+
+/* 快速时间获取 API (Phase 2) */
+uint64_t coco_get_time_fast(void);
 
 /* 内部调度辅助函数 */
 void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro);

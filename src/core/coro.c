@@ -14,6 +14,12 @@ _Thread_local coco_sched_t *g_current_sched = NULL;
 _Thread_local coco_coro_t *g_current_coro = NULL;
 _Thread_local coco_ctx_t *g_return_ctx = NULL;
 
+/* 抢占 API 声明 */
+int coco_preempt_init(void);
+void coco_preempt_cleanup(void);
+int coco_preempt_arm(void);
+int coco_preempt_disarm(void);
+
 /* 协程入口包装函数 */
 void coro_entry_wrapper(void *arg) {
     (void)arg;
@@ -109,6 +115,15 @@ coco_sched_t *coco_sched_create(void) {
     /* 初始化老化阈值：100ms 后提升优先级 */
     sched->aging_threshold_ms = 100;
 
+    /* 初始化时间片公平调度（Phase 2）*/
+    sched->time_slice_ns = 10 * 1000000ULL;  /* 默认 10ms */
+    sched->fairness_enabled = false;          /* 默认禁用 */
+
+    /* 初始化异步抢占（Phase 3）*/
+    if (coco_preempt_init() != COCO_OK) {
+        /* 非致命错误，继续运行 */
+    }
+
     /* 加载 stack map (Phase 11) */
     const char *stackmap_path = getenv("COCO_STACKMAP_PATH");
     if (!stackmap_path) {
@@ -136,6 +151,9 @@ void coco_sched_destroy(coco_sched_t *sched) {
 
     /* 清理信号处理 */
     coco_signal_cleanup();
+
+    /* 清理异步抢占（Phase 3）*/
+    coco_preempt_cleanup();
 
     /* 清理所有协程 */
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
@@ -233,6 +251,9 @@ static void apply_aging(coco_sched_t *sched) {
 /* 老化检查间隔：每 N 次出队执行一次老化检查 */
 #define AGING_CHECK_INTERVAL 100
 
+/* 时间片检查间隔：每 N 次切换检查一次时间片 */
+#define TIME_SLICE_CHECK_INTERVAL 100
+
 /* 出队：从最高优先级队列头部取出（周期性执行老化检查） */
 static coco_coro_t *dequeue_ready(coco_sched_t *sched) {
     /* 周期性执行老化检查 */
@@ -271,10 +292,19 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     sched->current = coro;
     coro->state = COCO_STATE_RUNNING;
 
+    /* 记录运行开始时间（Phase 2 时间片公平调度）*/
+    if (sched->fairness_enabled) {
+        coro->runtime_start_ns = coco_get_time_fast();
+        coro->time_slice_expired = false;
+    }
+
     /* 初始化遥测（首次切换） */
     if (coro->stack_high_water_mark == 0) {
         coro->stack_high_water_mark = (size_t)coro->stack_top;
     }
+
+    /* 启用异步抢占定时器（Phase 3）*/
+    coco_preempt_arm();
 
     /* 设置溢出恢复点（仅对可增长协程） */
     if (coro->stack_growable) {
@@ -289,6 +319,9 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
         coco_ctx_switch(&sched->main_ctx, &coro->ctx);
     }
 
+    /* 禁用抢占定时器（Phase 3）*/
+    coco_preempt_disarm();
+
     /* 切换回调度器后，更新遥测 */
     size_t current_sp = (size_t)coro->ctx.sp;
     if (current_sp < coro->stack_high_water_mark) {
@@ -298,6 +331,17 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
 
 /* 处理协程返回 */
 static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
+    /* 检查时间片到期（Phase 2）*/
+    if (sched->fairness_enabled && coro->state == COCO_STATE_RUNNING) {
+        uint64_t now = coco_get_time_fast();
+        if (now - coro->runtime_start_ns >= sched->time_slice_ns) {
+            coro->time_slice_expired = true;
+            /* 强制让出：重新入队并标记为 READY */
+            enqueue_ready(sched, coro);
+            return;
+        }
+    }
+
     switch (coro->state) {
         case COCO_STATE_CREATED:
             /* 协程刚创建，不应该在此出现 */
@@ -667,4 +711,20 @@ uint32_t coco_sched_get_stack_map_count(coco_sched_t *sched) {
         return 0;
     }
     return sched->stack_map->num_funcs;
+}
+int coco_sched_set_fairness(coco_sched_t *sched, bool enabled, uint32_t slice_ms) {
+    if (!sched) {
+        return COCO_ERROR;
+    }
+
+    sched->fairness_enabled = enabled;
+
+    if (slice_ms > 0) {
+        sched->time_slice_ns = (uint64_t)slice_ms * 1000000ULL;
+    } else {
+        /* 默认 10ms */
+        sched->time_slice_ns = 10 * 1000000ULL;
+    }
+
+    return COCO_OK;
 }

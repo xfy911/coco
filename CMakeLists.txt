@@ -50,6 +50,7 @@ set(CORE_SOURCES
     src/core/frame_walker.c
     src/core/stack_grow.c
     src/core/safety.c
+    src/core/preempt.c
     src/sched/global_sched.c
     src/sched/runq.c
     src/sched/sched.c
@@ -61,6 +62,7 @@ set(PLATFORM_SOURCES
     src/platform/coco_mutex.c
     src/platform/coco_cond.c
     src/platform/abi_detect.c
+    src/platform/time.c
 )
 
 set(TIMER_SOURCES
@@ -82,6 +84,7 @@ set(IO_SOURCES
 if(PLATFORM STREQUAL "linux")
     list(APPEND IO_SOURCES src/io/poll_linux.c)
     list(APPEND IO_SOURCES src/io/poll_iouring.c)
+    list(APPEND PLATFORM_SOURCES src/platform/linux/preempt.c)
     if(ARCH STREQUAL "x86_64")
         list(APPEND PLATFORM_ASM src/platform/linux/ctx_x86_64.S)
     elseif(ARCH STREQUAL "arm64")
@@ -96,6 +99,7 @@ if(PLATFORM STREQUAL "linux")
     endif()
 elseif(PLATFORM STREQUAL "macos")
     list(APPEND IO_SOURCES src/io/poll_macos.c)
+    list(APPEND PLATFORM_SOURCES src/platform/macos/preempt.c)
     if(ARCH STREQUAL "x86_64")
         list(APPEND PLATFORM_ASM src/platform/macos/ctx_x86_64.S)
     elseif(ARCH STREQUAL "arm64")
@@ -110,6 +114,7 @@ elseif(PLATFORM STREQUAL "macos")
     endif()
 elseif(PLATFORM STREQUAL "windows")
     list(APPEND IO_SOURCES src/io/poll_windows.c)
+    list(APPEND PLATFORM_SOURCES src/platform/windows/preempt.c)
     if(ARCH STREQUAL "x86_64")
         list(APPEND PLATFORM_ASM src/platform/windows/ctx_x86_64.S)
     elseif(ARCH STREQUAL "arm64")
@@ -186,6 +191,8 @@ if(COCO_BUILD_TESTS)
         test_stack_shrink
         test_channel_select
         test_stack_growth
+        test_preempt
+        test_fairness
     )
 
     # 平台特定测试

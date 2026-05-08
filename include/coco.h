@@ -339,6 +339,21 @@ coco_sched_t *coco_sched_get_current(void);
  * Used for testing and verification of stack map loading.
  */
 uint32_t coco_sched_get_stack_map_count(coco_sched_t *sched);
+
+/**
+ * @brief Enable or disable time-slice fairness scheduling
+ * @param sched Scheduler pointer
+ * @param enabled true to enable fairness, false to disable
+ * @param slice_ms Time slice in milliseconds (0 = use default 10ms)
+ * @return COCO_OK on success, COCO_ERROR on failure
+ *
+ * When enabled, each coroutine is limited to running for at most
+ * the specified time slice before being preempted and re-queued.
+ * This prevents CPU-bound coroutines from starving others.
+ *
+ * Default: disabled, 10ms time slice
+ */
+int coco_sched_set_fairness(coco_sched_t *sched, bool enabled, uint32_t slice_ms);
 /** @} */
 
 /* === Coroutine Lifecycle API === */
@@ -690,6 +705,43 @@ int coco_cancel(coco_coro_t *coro);
  * to enable cooperative cancellation.
  */
 int coco_cancelled(void);
+/** @} */
+
+/* === Preemption API === */
+/** @defgroup Preemption Preemption API
+ *  @brief Asynchronous preemption for fair scheduling
+ *  @{
+ */
+
+/**
+ * @brief Enable preemption for the current coroutine
+ *
+ * After calling this, the coroutine may be preempted after running
+ * for more than 10ms without yielding.
+ */
+void coco_preempt_enable(void);
+
+/**
+ * @brief Disable preemption for the current coroutine
+ *
+ * Use this for critical sections that must not be interrupted,
+ * such as stack growth operations.
+ */
+void coco_preempt_disable(void);
+
+/**
+ * @brief Check if preemption is pending
+ * @return 1 if preemption is pending, 0 otherwise
+ */
+int coco_preempt_is_pending(void);
+
+/**
+ * @brief Cooperative preemption checkpoint
+ *
+ * Call this periodically in long-running loops to allow
+ * the scheduler to preempt the coroutine.
+ */
+void coco_preempt_checkpoint(void);
 /** @} */
 
 /* === Multi-threaded Scheduler API === */
