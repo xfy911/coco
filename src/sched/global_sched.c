@@ -9,6 +9,7 @@
 #include "sched.h"
 #include <time.h>
 #include "../core/stack_pool_multi.h"
+#include "../io/netpoller_mt.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -217,6 +218,12 @@ int coco_global_runq_put(struct coco_coro *g) {
     g_global_sched->global_runq_size++;
 
     pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+
+    /* 唤醒空闲的工作线程 */
+    pthread_mutex_lock(&g_global_sched->idle_lock);
+    pthread_cond_broadcast(&g_global_sched->idle_cond);
+    pthread_mutex_unlock(&g_global_sched->idle_lock);
+
     return 0;
 }
 
@@ -368,6 +375,14 @@ int coco_global_sched_start(uint32_t num_workers) {
         return COCO_ERROR_NOMEM;
     }
 
+    /* 创建 netpoller (专用 I/O 轮询线程) */
+    gs->netpoller = coco_netpoller_create(gs);
+    if (!gs->netpoller) {
+        coco_sched_destroy(gs->main_sched);
+        gs->main_sched = NULL;
+        return COCO_ERROR_NOMEM;
+    }
+
     atomic_store(&gs->running, true);
     atomic_init(&gs->next_coro_id, 0);
 
@@ -392,11 +407,33 @@ int coco_global_sched_start(uint32_t num_workers) {
         if (pthread_create(&m->thread, NULL, worker_loop, p) != 0) {
             coco_machine_destroy(m);
             p->m = NULL;
+            coco_netpoller_destroy(gs->netpoller);
+            gs->netpoller = NULL;
             coco_sched_destroy(gs->main_sched);
             gs->main_sched = NULL;
             atomic_store(&gs->running, false);
             return COCO_ERROR;
         }
+    }
+
+    /* 启动 netpoller 线程 */
+    if (coco_netpoller_start(gs->netpoller) != COCO_OK) {
+        /* 工作线程已启动，需要停止它们 */
+        atomic_store(&gs->running, false);
+        pthread_mutex_lock(&gs->idle_lock);
+        pthread_cond_broadcast(&gs->idle_cond);
+        pthread_mutex_unlock(&gs->idle_lock);
+        for (uint32_t i = 0; i < gs->processor_count; i++) {
+            coco_processor_t *p = gs->processors[i];
+            if (p && p->m && p->m->thread) {
+                pthread_join(p->m->thread, NULL);
+            }
+        }
+        coco_netpoller_destroy(gs->netpoller);
+        gs->netpoller = NULL;
+        coco_sched_destroy(gs->main_sched);
+        gs->main_sched = NULL;
+        return COCO_ERROR;
     }
 
     return COCO_OK;
@@ -442,6 +479,12 @@ int coco_global_sched_stop(void) {
             p->m = NULL;
             atomic_store(&p->status, P_IDLE);
         }
+    }
+
+    /* 停止并销毁 netpoller */
+    if (gs->netpoller) {
+        coco_netpoller_destroy(gs->netpoller);
+        gs->netpoller = NULL;
     }
 
     /* Destroy main scheduler */

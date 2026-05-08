@@ -35,6 +35,7 @@ struct coco_processor;
 struct coco_machine;
 struct coco_timer_wheel;
 struct coco_sched;
+struct coco_netpoller;
 
 /* 全局调度器 */
 typedef struct coco_global_sched {
@@ -59,6 +60,9 @@ typedef struct coco_global_sched {
 
     /* 主调度器 (用于定时器唤醒) */
     struct coco_sched *main_sched;
+
+    /* Netpoller (专用 I/O 轮询线程) */
+    struct coco_netpoller *netpoller;
 
     /* 统计信息 */
     _Atomic uint64_t total_coroutines;

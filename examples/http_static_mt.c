@@ -112,15 +112,16 @@ static int build_response_header(char *buffer, size_t size, const http_response_
         resp->content_length);
 }
 
-/* 多线程环境下使用阻塞 I/O
- * 每个连接在独立协程中执行，阻塞不会影响其他协程。
+/* 使用协程安全的 I/O 操作
+ * coco_read/coco_write 在 fd 未就绪时自动 yield，
+ * 等待 netpoller 线程唤醒。
  */
 static ssize_t mt_read(int fd, void *buf, size_t count) {
-    return read(fd, buf, count);
+    return coco_read(fd, buf, count);
 }
 
 static ssize_t mt_write(int fd, const void *buf, size_t count) {
-    return write(fd, buf, count);
+    return coco_write(fd, buf, count);
 }
 
 /* 发送错误响应 */
@@ -577,7 +578,7 @@ int main(int argc, char **argv) {
         struct sockaddr_in client_addr;
         socklen_t addrlen = sizeof(client_addr);
 
-        int client_fd = accept4(listen_fd, (struct sockaddr*)&client_addr, &addrlen, SOCK_NONBLOCK);
+        int client_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &addrlen);
         if (client_fd < 0) {
             if (!g_running) break;
             if (errno == EAGAIN || errno == EWOULDBLOCK) {

@@ -7,6 +7,8 @@
  */
 
 #include "../coco_internal.h"
+#include "../sched/global_sched.h"
+#include "../io/netpoller_mt.h"
 #include <errno.h>
 #include <unistd.h>
 
@@ -57,6 +59,10 @@ int coco_read(int fd, void *buf, size_t count) {
 
     coco_poll_set_nonblock(fd);
 
+    /* 检查是否在多线程模式下 */
+    coco_global_sched_t *gs = coco_global_get();
+    coco_netpoller_t *np = gs ? gs->netpoller : NULL;
+
     while (1) {
         /* 检查取消状态 */
         if (coro->cancelled) {
@@ -68,9 +74,17 @@ int coco_read(int fd, void *buf, size_t count) {
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 /* 注册读事件并等待 */
-                coco_poll_register(sched, fd, coro, POLLIN);
-                coco_yield();
-                coco_poll_unregister(sched, fd);
+                if (np) {
+                    /* 多线程模式：使用 netpoller */
+                    coco_netpoller_register(np, fd, 0x01, coro, 0);
+                    coco_yield();
+                    coco_netpoller_unregister(np, fd, 0x01);
+                } else {
+                    /* 单线程模式：使用 sched->poll_fd */
+                    coco_poll_register(sched, fd, coro, POLLIN);
+                    coco_yield();
+                    coco_poll_unregister(sched, fd);
+                }
             } else {
                 return COCO_ERROR;
             }
@@ -98,6 +112,10 @@ int coco_write(int fd, const void *buf, size_t count) {
 
     coco_poll_set_nonblock(fd);
 
+    /* 检查是否在多线程模式下 */
+    coco_global_sched_t *gs = coco_global_get();
+    coco_netpoller_t *np = gs ? gs->netpoller : NULL;
+
     size_t written = 0;
 
     while (written < count) {
@@ -111,9 +129,17 @@ int coco_write(int fd, const void *buf, size_t count) {
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 /* 注册写事件并等待 */
-                coco_poll_register(sched, fd, coro, POLLOUT);
-                coco_yield();
-                coco_poll_unregister(sched, fd);
+                if (np) {
+                    /* 多线程模式：使用 netpoller */
+                    coco_netpoller_register(np, fd, 0x02, coro, 0);
+                    coco_yield();
+                    coco_netpoller_unregister(np, fd, 0x02);
+                } else {
+                    /* 单线程模式：使用 sched->poll_fd */
+                    coco_poll_register(sched, fd, coro, POLLOUT);
+                    coco_yield();
+                    coco_poll_unregister(sched, fd);
+                }
             } else {
                 return COCO_ERROR;
             }
