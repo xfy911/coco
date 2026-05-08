@@ -414,6 +414,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
         return NULL;
     }
 
+    /* 默认栈大小 64KB */
     if (stack_size == 0) {
         stack_size = COCO_DEFAULT_STACK_SIZE;
     }
@@ -424,6 +425,14 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
         return NULL;
     }
 
+    /* 动态栈启用条件：
+     * - stack_size < COCO_DEFAULT_STACK_SIZE (64KB)
+     * - stack_size >= COCO_STACK_MIN_SIZE (2KB)
+     * 这意味着用户显式请求小栈，启用动态增长
+     */
+    bool enable_growable = (stack_size < COCO_DEFAULT_STACK_SIZE &&
+                            stack_size >= COCO_STACK_MIN_SIZE);
+
     /* 从栈池分配栈 */
     coro->stack_top = stack_pool_alloc(sched->stack_pool, stack_size);
     if (!coro->stack_top) {
@@ -433,6 +442,20 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     coro->stack_base = (void*)((uintptr_t)coro->stack_top - stack_size - 4096);
     coro->stack_size = stack_size;
     coro->stack_from_pool = true;  /* 标记栈来自池 */
+
+    /* 设置动态栈属性 */
+    if (enable_growable) {
+        coro->stack_growable = true;
+        coro->current_stack_size = stack_size;
+        coro->max_stack_size = COCO_STACK_MAX_SIZE;
+        /* 设置上下文的栈边界用于溢出检测 */
+        coro->ctx.stack_base = coro->stack_base;
+        coro->ctx.stack_limit = (void*)((uintptr_t)coro->stack_top - 4096);
+    } else {
+        coro->stack_growable = false;
+        coro->current_stack_size = stack_size;
+        coro->max_stack_size = stack_size;  /* 固定栈，不增长 */
+    }
 
     /* 初始化上下文 */
     coco_ctx_init(&coro->ctx, coro->stack_top, coro_entry_wrapper, arg);
@@ -457,6 +480,27 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     enqueue_ready(sched, coro);
 
     return coro;
+}
+
+/**
+ * 验证 stack map 是否已加载（用于动态栈协程）
+ *
+ * @param sched 调度器指针
+ * @return COCO_OK 如果 stack map 已加载，COCO_ERROR 如果未加载
+ *
+ * 对于使用动态栈的协程，必须先调用此函数验证 stack map 已加载，
+ * 否则栈增长时将失败。
+ */
+int coco_validate_stack_map(coco_sched_t *sched) {
+    if (!sched) {
+        return COCO_ERROR;
+    }
+
+    if (sched->stack_map == NULL) {
+        return COCO_ERROR;
+    }
+
+    return COCO_OK;
 }
 
 void coco_exit(coco_coro_t *coro, void *result) {

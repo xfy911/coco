@@ -122,7 +122,9 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
         g_current_stack_map,  /* Use loaded stack map for pointer adjustment (Phase 11) */
         (uintptr_t)coro->ctx.sp,
         coro->stack_from_pool,
-        g_overflow_sched->stack_pool
+        g_overflow_sched->stack_pool,
+        coro->id,
+        coro->stack_growable
     );
 
     if (grow_info.result != COCO_GROW_OK) {

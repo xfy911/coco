@@ -397,6 +397,18 @@ void *coco_join(coco_coro_t *coro);
  * Returns the stack to the scheduler's pool for reuse.
  */
 void coco_destroy(coco_coro_t *coro);
+
+/**
+ * @brief Validate that a stack map is loaded for dynamic stack growth
+ * @param sched Scheduler pointer
+ * @return COCO_OK if stack map is loaded, COCO_ERROR otherwise
+ *
+ * For coroutines with dynamic stack enabled (stack_size < 64KB),
+ * a stack map must be loaded for pointer adjustment during growth.
+ * Call this before creating dynamic stack coroutines to ensure
+ * the stack map is available.
+ */
+int coco_validate_stack_map(coco_sched_t *sched);
 /** @} */
 
 /* === Coroutine Query API === */

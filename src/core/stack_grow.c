@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <stdio.h>  /* for logging */
 
 /* Platform-specific headers */
 #if defined(__APPLE__)
@@ -184,9 +185,17 @@ coco_grow_info_t coco_grow_stack(
     const coco_stack_map_t* stack_map,
     uintptr_t current_sp,
     bool stack_from_pool,
-    stack_pool_t* stack_pool
+    stack_pool_t* stack_pool,
+    uint64_t coro_id,
+    bool stack_growable
 ) {
     coco_grow_info_t info = {0};
+
+    /* Fail-fast: 当 stack_growable=true 但 stack_map==NULL 时返回错误 */
+    if (stack_growable && stack_map == NULL) {
+        info.result = COCO_GROW_ERROR_NO_STACKMAP;
+        return info;
+    }
 
     // Get current stack parameters from context
     info.old_base = (uintptr_t)ctx->stack_base;
@@ -281,6 +290,10 @@ coco_grow_info_t coco_grow_stack(
 
     info.frames_adjusted = 0;  // Would need frame walk to count
     info.result = COCO_GROW_OK;
+
+    /* 栈增长日志 */
+    fprintf(stderr, "[coco] stack grow: coro=%lu old_size=%zu new_size=%zu pointers_adjusted=%u\n",
+            (unsigned long)coro_id, info.old_size, info.new_size, info.pointers_adjusted);
 
     // Free old stack
     // If old stack was from pool, return it to pool; otherwise munmap

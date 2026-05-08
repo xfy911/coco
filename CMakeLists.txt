@@ -185,6 +185,7 @@ if(COCO_BUILD_TESTS)
         test_global_sched_mt
         test_stack_shrink
         test_channel_select
+        test_stack_growth
     )
 
     # 平台特定测试

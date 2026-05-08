@@ -36,11 +36,12 @@ extern "C" {
  * @brief Result of a stack growth attempt
  */
 typedef enum coco_grow_result {
-    COCO_GROW_OK = 0,           /**< Growth successful */
-    COCO_GROW_ERROR_NOMEM = -1, /**< Memory allocation failed */
-    COCO_GROW_ERROR_MAX = -2,   /**< Reached maximum stack size */
-    COCO_GROW_ERROR_CHAIN = -3, /**< Frame chain invalid */
-    COCO_GROW_ERROR_BOUNDS = -4 /**< Pointer outside stack bounds */
+    COCO_GROW_OK = 0,              /**< Growth successful */
+    COCO_GROW_ERROR_NOMEM = -1,    /**< Memory allocation failed */
+    COCO_GROW_ERROR_MAX = -2,     /**< Reached maximum stack size */
+    COCO_GROW_ERROR_CHAIN = -3,   /**< Frame chain invalid */
+    COCO_GROW_ERROR_BOUNDS = -4,  /**< Pointer outside stack bounds */
+    COCO_GROW_ERROR_NO_STACKMAP = -5 /**< Stack map required but not loaded */
 } coco_grow_result_t;
 
 /**
@@ -98,11 +99,16 @@ size_t coco_calc_new_stack_size(size_t current_size);
  * 4. Adjust stack pointers
  * 5. Update coroutine context
  *
+ * Fail-fast: If stack_growable is true but stack_map is NULL,
+ * returns COCO_GROW_ERROR_NO_STACKMAP immediately.
+ *
  * @param ctx The coroutine context to grow
  * @param stack_map The loaded stack map for pointer identification
  * @param current_sp Current stack pointer (from saved context or signal)
  * @param stack_from_pool Whether the old stack was allocated from pool
  * @param stack_pool The stack pool to return old stack to (if from pool), or NULL
+ * @param coro_id Coroutine ID for logging
+ * @param stack_growable Whether this coroutine has dynamic stack enabled
  * @return Growth information structure
  */
 coco_grow_info_t coco_grow_stack(
@@ -110,7 +116,9 @@ coco_grow_info_t coco_grow_stack(
     const coco_stack_map_t* stack_map,
     uintptr_t current_sp,
     bool stack_from_pool,
-    struct stack_pool* stack_pool
+    struct stack_pool* stack_pool,
+    uint64_t coro_id,
+    bool stack_growable
 );
 
 /**
