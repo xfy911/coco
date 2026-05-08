@@ -5,12 +5,65 @@ A high-performance, cross-platform coroutine library written in C.
 ## Features
 
 - **Stackful Coroutine**: 64KB fixed stack with guard page for overflow detection
+- **Dynamic Stack Growth**: Opt-in stack growth from 2KB to 8MB for deep recursion
 - **Cooperative Scheduling**: Single-threaded event loop with run queue
+- **Fair Scheduling**: Time-slice based scheduling to prevent starvation
+- **Asynchronous Preemption**: Signal-based preemption for CPU-bound coroutines
 - **Channel Communication**: Buffered and unbuffered channels (Go-style)
+- **Multi-threaded Scheduler**: Work-stealing scheduler for parallelism
 - **Async I/O**: epoll (Linux), kqueue (macOS), WSAPoll (Windows)
 - **Timer**: 4-layer hierarchical timing wheel (1ms precision)
 - **Cross-Platform**: Linux, macOS, Windows (x86-64 and ARM64)
-- **High Performance**: Context switch < 100ns
+- **High Performance**: Context switch < 100ns, preemption latency p99 <= 15ms
+
+## New in v2.0: Go-like Runtime Features
+
+### Dynamic Stack Management
+
+Create coroutines with small initial stacks that grow on demand:
+
+```c
+// Create coroutine with 2KB initial stack (grows up to 8MB)
+coco_coro_t *coro = coco_create(sched, deep_recursion, arg, 2048);
+```
+
+### Fair Scheduling
+
+Prevent CPU-bound coroutines from starving others:
+
+```c
+// Enable time-slice fairness (10ms default)
+coco_sched_set_fairness(sched, true, 10);
+```
+
+### Asynchronous Preemption
+
+Signal-based preemption for long-running coroutines:
+
+```c
+void cpu_intensive_coroutine(void *arg) {
+    coco_preempt_enable();
+    for (int i = 0; i < BIG_NUMBER; i++) {
+        do_work();
+        coco_preempt_checkpoint();  // Allows preemption
+    }
+}
+```
+
+### Multi-threaded Scheduler
+
+```c
+// Start with 4 worker threads
+coco_global_sched_start(4);
+
+// Launch coroutine (auto-distributed)
+coco_go(my_entry, arg);
+
+coco_global_sched_wait();
+coco_global_sched_stop();
+```
+
+See [docs/MIGRATION.md](docs/MIGRATION.md) for full migration guide.
 
 ## Thread Safety
 

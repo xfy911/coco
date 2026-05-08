@@ -220,12 +220,18 @@ if(COCO_BUILD_TESTS)
         bench_channel
         bench_io
         bench_io_backend
+        bench_preempt
+        bench_stack
     )
 
     foreach(bench_name ${BENCH_TESTS})
         add_executable(${bench_name} tests/benchmark/${bench_name}.c)
         target_link_libraries(${bench_name} coco)
     endforeach()
+
+    # 整合测试 (运行所有单元测试)
+    add_executable(test_all tests/unit/test_all.c)
+    target_link_libraries(test_all coco)
 endif()
 
 # 示例
