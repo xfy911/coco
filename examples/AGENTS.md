@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-28 | Updated: 2026-05-07 -->
+<!-- Generated: 2026-04-28 | Updated: 2026-05-09 -->
 
 # examples
 
@@ -12,10 +12,18 @@ Usage examples demonstrating the coco coroutine library API and common patterns.
 | `basic.c` | Basic coroutine creation, yielding, and scheduler usage |
 | `pipeline.c` | Channel-based producer-consumer pipeline pattern |
 | `echo_server.c` | Async TCP echo server using I/O multiplexing and coroutines |
+| `http_static.c` | Single-threaded HTTP static file server with sendfile, chunked transfer, and graceful shutdown |
+| `http_static_mt.c` | Multi-threaded HTTP static file server using M:N scheduler and netpoller |
 | `memory_test.c` | Memory usage and stack telemetry benchmarks |
-| `timer.c` | Timer and delayed execution examples |
+| `timer.c` | Timer creation, cancellation, and `coco_sleep` usage |
 | `select.c` | Channel select (multiplexing) example |
 | `priority.c` | Coroutine priority scheduling example |
+| `cancel.c` | Coroutine cancellation with `coco_cancel`/`coco_cancelled` |
+| `join_exit.c` | `coco_join` for result waiting and `coco_exit` for return values |
+| `preemption.c` | Signal-based preemption, fairness scheduling, and cooperative checkpoints |
+| `fan_out.c` | Fan-out/fan-in parallel pattern using channels |
+| `sched_run_once.c` | Step-by-step scheduler control with `coco_sched_run_once` |
+| `multithread.c` | Multi-threaded M:N scheduler with `coco_go`/`coco_go_on`/`coco_go_with_opts` |
 
 ## Subdirectories
 None.

@@ -245,6 +245,12 @@ if(COCO_BUILD_EXAMPLES)
         timer
         select
         priority
+        cancel
+        join_exit
+        preemption
+        fan_out
+        sched_run_once
+        multithread
         http_static
         http_static_mt
     )
