@@ -24,6 +24,9 @@ coco_coro_t *runq_steal(coco_processor_t *target);
 /* 溢出到全局队列 */
 int runq_put_global(coco_coro_t *g);
 
+/* 负载均衡: 将本地队列尾部一半推入全局队列 */
+int runq_push_overflow(coco_processor_t *p);
+
 /* 查询 */
 uint32_t runq_size(coco_processor_t *p);
 bool runq_empty(coco_processor_t *p);

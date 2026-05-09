@@ -326,6 +326,12 @@ static void *worker_loop(void *arg) {
             if (coro->state == COCO_STATE_DEAD) {
                 atomic_fetch_sub(&gs->active_coroutines, 1);
             }
+
+            /* Load balancing: push overflow from local to global queue
+             * This prevents a single P from becoming a bottleneck */
+            pthread_mutex_lock(&p->local_runq_lock);
+            runq_push_overflow(p);
+            pthread_mutex_unlock(&p->local_runq_lock);
         } else {
             /* Idle wait - 持锁重检查避免丢失唤醒 (H2) */
             pthread_mutex_lock(&gs->idle_lock);

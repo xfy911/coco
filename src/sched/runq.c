@@ -127,6 +127,40 @@ int runq_put_global(coco_coro_t *g) {
     return coco_global_runq_put(g);
 }
 
+/* 负载均衡: 将本地队列尾部一半推入全局队列
+ * 调用者必须已持有 local_runq_lock */
+int runq_push_overflow(coco_processor_t *p) {
+    if (!p || p->local_runq_size < LOCAL_RUNQ_MAX / 2) {
+        return -1;  /* 不需要溢出 */
+    }
+
+    /* 偷取一半: 从尾部取 */
+    uint32_t push = p->local_runq_size / 2;
+    int pushed = 0;
+
+    for (uint32_t i = 0; i < push && p->local_runq_tail; i++) {
+        coco_coro_t *g = p->local_runq_tail;
+        p->local_runq_tail = g->prev;
+
+        if (p->local_runq_tail) {
+            p->local_runq_tail->next = NULL;
+        } else {
+            p->local_runq_head = NULL;
+        }
+
+        g->prev = NULL;
+        g->next = NULL;
+        p->local_runq_size--;
+
+        /* 推入全局队列 */
+        if (runq_put_global(g) == 0) {
+            pushed++;
+        }
+    }
+
+    return pushed;
+}
+
 /* 查询队列大小 */
 uint32_t runq_size(coco_processor_t *p) {
     if (!p) {

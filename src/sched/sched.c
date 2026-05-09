@@ -17,7 +17,12 @@
 
 /* 调度参数 */
 #define MAX_SPINS 10
-#define STEAL_ATTEMPTS 3
+#define STEAL_ATTEMPTS_MIN 2
+#define STEAL_ATTEMPTS_MAX 6
+#define STEAL_BACKOFF_THRESHOLD 3  /* 连续失败次数超过此值则退避 */
+
+/* 线程局部窃取退避计数器 */
+static _Thread_local uint32_t tl_steal_fail_count = 0;
 
 /* 查找可运行协程 */
 coco_coro_t *find_runnable(coco_processor_t *p) {
@@ -30,26 +35,40 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
     /* 1. 本地队列 */
     g = runq_get(p);
     if (g) {
+        /* 成功从本地获取，重置退避计数 */
+        tl_steal_fail_count = 0;
         return g;
     }
 
     /* 2. 全局队列 */
     g = coco_global_runq_get();
     if (g) {
+        tl_steal_fail_count = 0;
         return g;
     }
 
-    /* 3. 工作窃取 */
+    /* 3. 工作窃取 — 自适应尝试次数 */
     coco_global_sched_t *sched = coco_global_get();
     if (!sched) {
         return NULL;
     }
 
+    /* 根据失败历史动态调整尝试次数 */
+    uint32_t steal_attempts;
+    if (tl_steal_fail_count >= STEAL_BACKOFF_THRESHOLD) {
+        /* 连续失败，减少尝试并增加随机性 */
+        steal_attempts = STEAL_ATTEMPTS_MIN;
+    } else {
+        /* 正常情况 */
+        steal_attempts = STEAL_ATTEMPTS_MAX;
+    }
+
     /* 随机起始点，避免所有 P 同时偷取同一个目标 */
     uint32_t start = (p->id + 1) % sched->processor_count;
     uint32_t attempts = 0;
+    uint32_t failed = 0;
 
-    for (uint32_t i = 0; i < sched->processor_count && attempts < STEAL_ATTEMPTS; i++) {
+    for (uint32_t i = 0; i < sched->processor_count && attempts < steal_attempts; i++) {
         uint32_t target_id = (start + i) % sched->processor_count;
         if (target_id == p->id) {
             continue;
@@ -62,7 +81,11 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
 
         g = runq_steal(target);
         if (g) {
-            /* 将偷取的批次放入本地队列，返回第一个 */
+            /* 偷取成功：将批次放入本地队列，返回第一个 */
+            tl_steal_fail_count = 0;
+            record_steal_attempt();
+            record_steal_success();
+
             coco_coro_t *next = g->next;
             if (next) {
                 g->next = NULL;
@@ -78,8 +101,12 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
             return g;
         }
         attempts++;
+        failed++;
     }
 
+    /* 更新失败计数 */
+    tl_steal_fail_count += failed;
+    record_steal_attempt();
     return NULL;
 }
 
