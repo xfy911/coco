@@ -604,9 +604,9 @@ int main(int argc, char **argv) {
             }
             memcpy(ca->root_dir, resolved_root, root_len);
             ca->root_dir[root_len] = '\0';
-            /* coco_go 自动分发到工作线程，使用 16KB 栈以容纳 8KB 缓冲区 */
+            /* coco_go 自动分发到工作线程，使用 64KB 栈以容纳局部变量 */
             coco_go_opts_t opts = {
-                .stack_size = 16 * 1024,
+                .stack_size = 64 * 1024,
                 .context = NULL,
                 .priority = -1,
                 .p_id = -1
