@@ -204,6 +204,8 @@ int coco_global_runq_put(struct coco_coro *g) {
         return COCO_ERROR;
     }
 
+    g->state = COCO_STATE_READY;  /* 设置就绪状态 */
+
     pthread_mutex_lock(&g_global_sched->global_runq_lock);
 
     g->next = NULL;
@@ -306,6 +308,7 @@ static void *worker_loop(void *arg) {
         if (coro) {
             atomic_store(&p->curcoro, coro);
             g_current_coro = coro;
+            coro->state = COCO_STATE_RUNNING;  /* 设置运行状态 */
             coco_ctx_switch(&p->m->ctx, &coro->ctx);
             g_current_coro = NULL;
             atomic_store(&p->curcoro, NULL);
@@ -327,6 +330,7 @@ static void *worker_loop(void *arg) {
                 pthread_mutex_unlock(&gs->idle_lock);
                 atomic_store(&p->curcoro, coro);
                 g_current_coro = coro;
+                coro->state = COCO_STATE_RUNNING;  /* 设置运行状态 */
                 coco_ctx_switch(&p->m->ctx, &coro->ctx);
                 g_current_coro = NULL;
                 atomic_store(&p->curcoro, NULL);

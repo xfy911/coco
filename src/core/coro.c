@@ -5,6 +5,7 @@
 #include "../coco_internal.h"
 #include "stack_pool.h"
 #include "../../include/coco_stack_map.h"
+#include "../sched/global_sched.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -569,7 +570,18 @@ void coco_yield(void) {
 
     /* 仅当协程正在运行时才重新入队（否则可能已被 channel 等机制设置为 WAITING） */
     if (coro->state == COCO_STATE_RUNNING) {
-        enqueue_ready(sched, coro);
+        /* 检查是否在多线程模式下 */
+        extern coco_global_sched_t *coco_global_get(void);
+        coco_global_sched_t *gs = coco_global_get();
+
+        if (gs && gs->processor_count > 0) {
+            /* 多线程模式：放入全局队列 */
+            extern int coco_global_runq_put(struct coco_coro *g);
+            coco_global_runq_put(coro);
+        } else {
+            /* 单线程模式：放入本地队列 */
+            enqueue_ready(sched, coro);
+        }
     }
 
     /* 切换回调度器 */

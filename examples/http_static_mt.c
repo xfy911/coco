@@ -526,7 +526,7 @@ int main(int argc, char **argv) {
     printf("=== HTTP Static Server (coco multi-threaded) ===\n\n");
     printf("Root directory: %s\n", resolved_root);
     printf("Port: %d\n", port);
-    printf("Worker threads: %s\n", num_threads ? "auto-detect" : argv[3]);
+    printf("Worker threads: %s\n", num_threads > 0 ? argv[3] : "auto-detect");
     printf("\nTest with: curl http://localhost:%d/\n\n", port);
 
     signal(SIGINT, signal_handler);
@@ -604,8 +604,14 @@ int main(int argc, char **argv) {
             }
             memcpy(ca->root_dir, resolved_root, root_len);
             ca->root_dir[root_len] = '\0';
-            /* coco_go 自动分发到工作线程 */
-            coco_go(handle_client, ca);
+            /* coco_go 自动分发到工作线程，使用 16KB 栈以容纳 8KB 缓冲区 */
+            coco_go_opts_t opts = {
+                .stack_size = 16 * 1024,
+                .context = NULL,
+                .priority = -1,
+                .p_id = -1
+            };
+            coco_go_with_opts(handle_client, ca, &opts);
         } else {
             close(client_fd);
         }
