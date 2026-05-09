@@ -160,8 +160,16 @@ void coco_sched_destroy(coco_sched_t *sched) {
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
         coco_coro_t *coro = sched->coro_table[i];
         if (coro) {
+            /* 清理 select 状态 */
+            coco_select_cleanup(coro);
+
+            /* 释放栈 */
             if (coro->stack_base) {
-                stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+                if (coro->stack_from_pool && sched->stack_pool) {
+                    stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+                } else {
+                    coco_stack_free(coro->stack_top, coro->stack_size);
+                }
                 coro->stack_base = NULL;
             }
             free(coro);

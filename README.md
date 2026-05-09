@@ -67,7 +67,10 @@ See [docs/MIGRATION.md](docs/MIGRATION.md) for full migration guide.
 
 ## Thread Safety
 
-Coco uses a **single-threaded cooperative model**. All coroutines run within one scheduler on one thread. The scheduler and its coroutines must not be accessed from multiple threads simultaneously.
+Coco supports two scheduling modes:
+
+- **Single-threaded (default)**: All coroutines run within one scheduler on one thread using cooperative scheduling. This is the simplest and fastest mode for I/O-bound workloads.
+- **Multi-threaded**: Use `coco_global_sched_start(n)` to launch `n` worker threads with a work-stealing scheduler. Coroutines created via `coco_go()` are automatically distributed across workers. Each scheduler instance and its coroutines must not be accessed from multiple threads simultaneously.
 
 ## Platform Support
 

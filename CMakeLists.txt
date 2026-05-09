@@ -336,3 +336,17 @@ if(COCO_BUILD_TESTS AND COCO_ENABLE_COVERAGE)
         message(WARNING "lcov or genhtml not found. Coverage target will not be available.")
     endif()
 endif()
+
+# 安装规则
+include(GNUInstallDirs)
+install(TARGETS coco
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+install(FILES include/coco.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(FILES include/coco_safety.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    OPTIONAL
+)
