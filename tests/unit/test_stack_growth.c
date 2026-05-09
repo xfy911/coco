@@ -2,8 +2,9 @@
  * test_stack_growth.c - 动态栈增长测试
  *
  * 测试动态栈功能：
- * - 默认栈大小保持 64KB
- * - 用户可通过 stack_size = 2048 启用动态栈
+ * - 默认栈大小为 2KB（与 Go 1.22+ 一致）
+ * - 默认启用动态栈增长
+ * - 64KB+ 栈使用静态栈（不增长）
  * - stack map 缺失时返回错误
  */
 
@@ -54,10 +55,10 @@ static void recursive_entry(void *arg) {
 }
 
 /**
- * 测试 1: 默认栈大小为 64KB
+ * 测试 1: 默认栈大小为 2KB（与 Go 1.22+ 一致）
  */
 static void test_default_stack_size(void) {
-    TEST("default stack size is 64KB");
+    TEST("default stack size is 2KB (Go 1.22+ compatible)");
 
     coco_sched_t *sched = coco_sched_create();
     assert(sched != NULL);
@@ -66,11 +67,12 @@ static void test_default_stack_size(void) {
     coco_coro_t *coro = coco_create(sched, simple_entry, NULL, 0);
     assert(coro != NULL);
 
-    /* 验证栈大小 */
-    if (coro->stack_size == COCO_DEFAULT_STACK_SIZE) {
+    /* 验证栈大小为 2KB */
+    if (coro->stack_size == COCO_DEFAULT_STACK_SIZE &&
+        coro->stack_size == 2048) {
         PASS();
     } else {
-        FAIL("stack size not 64KB");
+        FAIL("stack size not 2KB");
     }
 
     coco_sched_destroy(sched);
@@ -102,23 +104,24 @@ static void test_small_stack_enables_growth(void) {
 }
 
 /**
- * 测试 3: 64KB 栈不启用动态栈
+ * 测试 3: 64KB 栈（COCO_STACK_FIXED）不启用动态栈
  */
 static void test_large_stack_no_growth(void) {
-    TEST("64KB stack does not enable dynamic stack");
+    TEST("64KB stack (COCO_STACK_FIXED) does not enable dynamic stack");
 
     coco_sched_t *sched = coco_sched_create();
     assert(sched != NULL);
 
-    /* 创建 64KB 栈的协程 */
-    coco_coro_t *coro = coco_create(sched, simple_entry, NULL, COCO_DEFAULT_STACK_SIZE);
+    /* 创建 64KB 固定栈的协程 */
+    coco_coro_t *coro = coco_create(sched, simple_entry, NULL, COCO_STACK_FIXED);
     assert(coro != NULL);
 
-    /* 验证动态栈未启用 */
-    if (coro->stack_growable == false) {
+    /* 验证动态栈未启用（静态栈） */
+    if (coro->stack_growable == false &&
+        coro->stack_size == COCO_STACK_FIXED) {
         PASS();
     } else {
-        FAIL("dynamic stack should not be enabled for 64KB");
+        FAIL("dynamic stack should not be enabled for 64KB fixed stack");
     }
 
     coco_sched_destroy(sched);
@@ -192,15 +195,15 @@ static void test_stack_growth_failfast(void) {
 }
 
 /**
- * 测试 6: 栈大小边界检查
+ * 测试 6: 栈大小边界检查（小于 COCO_STACK_FIXED 启用动态增长）
  */
 static void test_stack_size_boundary(void) {
-    TEST("stack size between MIN and DEFAULT enables growth");
+    TEST("stack size < COCO_STACK_FIXED enables growth");
 
     coco_sched_t *sched = coco_sched_create();
     assert(sched != NULL);
 
-    /* 创建 32KB 栈的协程（介于 MIN 和 DEFAULT 之间） */
+    /* 创建 32KB 栈的协程（小于 COCO_STACK_FIXED = 64KB） */
     coco_coro_t *coro = coco_create(sched, simple_entry, NULL, 32 * 1024);
     assert(coro != NULL);
 

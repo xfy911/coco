@@ -28,8 +28,9 @@ coco_safety_config_t coco_get_default_config(coco_safety_mode_t mode) {
 
     switch (mode) {
         case COCO_SAFETY_NONE:
-            config.min_stack_size = COCO_STACK_DEFAULT_SIZE;
-            config.max_stack_size = COCO_STACK_DEFAULT_SIZE;
+            /* 静态栈模式：使用固定大栈（64KB） */
+            config.min_stack_size = COCO_STACK_FIXED;
+            config.max_stack_size = COCO_STACK_FIXED;
             config.grow_threshold_percent = 100;  // Never grow
             config.shrink_threshold_percent = 0;
             config.scan_all_pointers = false;
@@ -55,8 +56,8 @@ coco_safety_config_t coco_get_default_config(coco_safety_mode_t mode) {
             break;
 
         default:
-            config.min_stack_size = COCO_STACK_DEFAULT_SIZE;
-            config.max_stack_size = COCO_STACK_DEFAULT_SIZE;
+            config.min_stack_size = COCO_STACK_MIN_SIZE;
+            config.max_stack_size = COCO_STACK_MAX_SIZE;
             break;
     }
 

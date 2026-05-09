@@ -12,10 +12,12 @@
 
 /* 获取 size class 索引 */
 static int get_size_class_index(size_t size) {
-    if (size <= STACK_SIZE_16K) return 0;
-    if (size <= STACK_SIZE_32K) return 1;
-    if (size <= STACK_SIZE_64K) return 2;
-    if (size <= STACK_SIZE_128K) return 3;
+    if (size <= STACK_SIZE_2K) return 0;
+    if (size <= STACK_SIZE_4K) return 1;
+    if (size <= STACK_SIZE_8K) return 2;
+    if (size <= STACK_SIZE_16K) return 3;
+    if (size <= STACK_SIZE_32K) return 4;
+    if (size <= STACK_SIZE_64K) return 5;
     return -1;  /* 超出范围，不使用池 */
 }
 
@@ -26,11 +28,13 @@ stack_pool_t *stack_pool_create(void) {
         return NULL;
     }
 
-    /* 初始化 size classes */
-    pool->sizes[0] = STACK_SIZE_16K;
-    pool->sizes[1] = STACK_SIZE_32K;
-    pool->sizes[2] = STACK_SIZE_64K;
-    pool->sizes[3] = STACK_SIZE_128K;
+    /* 初始化 size classes: 2KB, 4KB, 8KB, 16KB, 32KB, 64KB */
+    pool->sizes[0] = STACK_SIZE_2K;
+    pool->sizes[1] = STACK_SIZE_4K;
+    pool->sizes[2] = STACK_SIZE_8K;
+    pool->sizes[3] = STACK_SIZE_16K;
+    pool->sizes[4] = STACK_SIZE_32K;
+    pool->sizes[5] = STACK_SIZE_64K;
 
     /* 设置上限 */
     for (int i = 0; i < STACK_POOL_NUM_CLASSES; i++) {

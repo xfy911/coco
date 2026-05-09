@@ -34,8 +34,8 @@ extern "C" {
 /** Maximum stack size (1MB) - upper limit for FULL mode */
 #define COCO_STACK_MAX_SIZE     (1024 * 1024)
 
-/** Default initial stack size (64KB) - matches current coco default */
-#define COCO_STACK_DEFAULT_SIZE (64 * 1024)
+/** Default initial stack size (2KB) - matches Go 1.22+ starting stack */
+#define COCO_STACK_DEFAULT_SIZE 2048
 
 /** Stack growth threshold - grow when usage exceeds this percentage */
 #define COCO_STACK_GROW_THRESHOLD 0.75

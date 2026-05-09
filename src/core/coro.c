@@ -458,7 +458,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
         return NULL;
     }
 
-    /* 默认栈大小 64KB */
+    /* 默认栈大小 2KB（与 Go 1.22+ 一致） */
     if (stack_size == 0) {
         stack_size = COCO_DEFAULT_STACK_SIZE;
     }
@@ -470,12 +470,11 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     }
 
     /* 动态栈启用条件：
-     * - stack_size < COCO_DEFAULT_STACK_SIZE (64KB)
-     * - stack_size >= COCO_STACK_MIN_SIZE (2KB)
-     * 这意味着用户显式请求小栈，启用动态增长
+     * - stack_size < COCO_STACK_FIXED (64KB)：默认启用动态增长
+     * - stack_size >= COCO_STACK_FIXED：使用静态栈（不增长）
+     * 这意味着默认行为是动态栈，大栈为静态栈
      */
-    bool enable_growable = (stack_size < COCO_DEFAULT_STACK_SIZE &&
-                            stack_size >= COCO_STACK_MIN_SIZE);
+    bool enable_growable = (stack_size < COCO_STACK_FIXED);
 
     /* 从栈池分配栈 */
     coro->stack_top = stack_pool_alloc(sched->stack_pool, stack_size);

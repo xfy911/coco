@@ -12,7 +12,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Size classes: 8KB, 16KB, 32KB, 64KB, 128KB, 256KB, 512KB, 1MB */
+/* Size classes: 2KB, 4KB, 8KB, 16KB, 32KB, 64KB, 128KB, 256KB, 512KB, 1MB */
+#define STACK_SIZE_2K    (2 * 1024)
+#define STACK_SIZE_4K    (4 * 1024)
 #define STACK_SIZE_8K    (8 * 1024)
 #define STACK_SIZE_16K   (16 * 1024)
 #define STACK_SIZE_32K   (32 * 1024)
@@ -23,8 +25,8 @@
 #define STACK_SIZE_1M    (1024 * 1024)
 
 /* 最小、默认和最大尺寸 */
-#define STACK_SIZE_MIN     STACK_SIZE_8K
-#define STACK_SIZE_DEFAULT STACK_SIZE_32K
+#define STACK_SIZE_MIN     STACK_SIZE_2K
+#define STACK_SIZE_DEFAULT STACK_SIZE_2K
 #define STACK_SIZE_MAX     STACK_SIZE_1M
 
 /* 栈池选择性清零模式 */

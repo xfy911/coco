@@ -12,10 +12,10 @@
 #include <stdint.h>
 
 /* 栈池大小类 */
-#define STACK_POOL_NUM_CLASSES  4
+#define STACK_POOL_NUM_CLASSES  6
 #define STACK_POOL_CLASS_LIMIT  256  /* 每个 size class 上限 */
 
-/* Size classes: 16KB, 32KB, 64KB, 128KB */
+/* Size classes: 2KB, 4KB, 8KB, 16KB, 32KB, 64KB */
 
 /* 空闲栈节点 - 嵌入栈空间 */
 typedef struct stack_node {
