@@ -61,9 +61,12 @@ int main(void) {
     printf("Stress test: %d channels x %d items = %d messages\n",
            CHANNELS, ITEMS_PER_CH, CHANNELS * ITEMS_PER_CH);
 
+    coco_channel_t *channels[CHANNELS];
+
     for (int i = 0; i < CHANNELS; i++) {
         coco_channel_t *ch = coco_channel_create(ITEMS_PER_CH);
         assert(ch != NULL);
+        channels[i] = ch;
         coco_create(sched, receiver, ch, 0);
 
         sender_ctx_t *ctx = malloc(sizeof(sender_ctx_t));
@@ -82,6 +85,11 @@ int main(void) {
 
     printf("  Sent: %d, Received: %d\n", sent, received);
     assert(received == CHANNELS * ITEMS_PER_CH);
+
+    /* 销毁所有 channel 避免内存泄漏 (ASan 验证) */
+    for (int i = 0; i < CHANNELS; i++) {
+        coco_channel_destroy(channels[i]);
+    }
 
     coco_sched_destroy(sched);
 

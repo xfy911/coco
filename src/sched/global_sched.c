@@ -325,6 +325,13 @@ static void *worker_loop(void *arg) {
             /* Handle coroutine state after switch back */
             if (coro->state == COCO_STATE_DEAD) {
                 atomic_fetch_sub(&gs->active_coroutines, 1);
+                /* Free dead coroutine */
+                if (coro->stack_base && p->stack_pool) {
+                    stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool,
+                                          coro->stack_top, coro->stack_size);
+                    coro->stack_base = NULL;
+                }
+                free(coro);
             }
 
             /* Load balancing: push overflow from local to global queue
@@ -351,6 +358,13 @@ static void *worker_loop(void *arg) {
                 atomic_store(&p->curcoro, NULL);
                 if (coro->state == COCO_STATE_DEAD) {
                     atomic_fetch_sub(&gs->active_coroutines, 1);
+                    /* Free dead coroutine */
+                    if (coro->stack_base && p->stack_pool) {
+                        stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool,
+                                              coro->stack_top, coro->stack_size);
+                        coro->stack_base = NULL;
+                    }
+                    free(coro);
                 }
                 continue;
             }

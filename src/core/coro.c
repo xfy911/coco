@@ -514,7 +514,21 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     coro->priority = COCO_PRIORITY_NORMAL;  /* 默认优先级 */
     coro->ready_timestamp = 0;
 
-    /* 添加到协程池 */
+    /* 添加到协程池 (ID 超过容量时扩展表) */
+    if (coro->id >= sched->coro_capacity) {
+        /* Grow coro_table to accommodate new ID */
+        uint32_t new_cap = sched->coro_capacity * 2;
+        while (new_cap <= coro->id) {
+            new_cap *= 2;
+        }
+        coco_coro_t **new_table = realloc(sched->coro_table, new_cap * sizeof(coco_coro_t *));
+        if (new_table) {
+            memset(new_table + sched->coro_capacity, 0,
+                   (new_cap - sched->coro_capacity) * sizeof(coco_coro_t *));
+            sched->coro_table = new_table;
+            sched->coro_capacity = new_cap;
+        }
+    }
     if (coro->id < sched->coro_capacity) {
         sched->coro_table[coro->id] = coro;
     }

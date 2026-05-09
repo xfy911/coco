@@ -122,6 +122,11 @@ static void test_iouring_batch_submit(void) {
 }
 
 int main(void) {
+#ifdef __SANITIZE_ADDRESS__
+    printf("=== io_uring Tests ===\n");
+    printf("Skipped: io_uring is not compatible with AddressSanitizer\n");
+    return 0;
+#else
     printf("=== io_uring Tests ===\n");
 
     test_iouring_init();
@@ -131,6 +136,7 @@ int main(void) {
 
     printf("\nAll io_uring tests passed!\n");
     return 0;
+#endif
 }
 
 #else /* !__linux__ */
