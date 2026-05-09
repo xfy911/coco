@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 build-asan/
+build_asan/
 build_coverage/
 build_test/
 build_ts/
