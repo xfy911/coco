@@ -19,7 +19,7 @@ extern _Thread_local coco_coro_t *g_current_coro;
 /* Channel 结构 */
 struct coco_channel {
     size_t capacity;          /* 缓冲区大小（0 = 无缓冲） */
-    int closed;               /* 是否已关闭 */
+    _Atomic int closed;               /* 是否已关闭 (atomic for thread safety) */
 
     /* 引用计数和同步 */
     _Atomic uint32_t refcount;        /* 引用计数 */
@@ -292,7 +292,7 @@ coco_channel_t *coco_channel_create(size_t capacity) {
     }
 
     ch->capacity = capacity;
-    ch->closed = 0;
+    atomic_init(&ch->closed, 0);
 
     /* 初始化引用计数和同步字段 */
     atomic_init(&ch->refcount, 1);
@@ -323,7 +323,7 @@ coco_channel_t *coco_channel_create(size_t capacity) {
  * @return COCO_OK 成功，负数错误码
  */
 int coco_channel_send(coco_channel_t *ch, void *value) {
-    if (!ch || ch->closed) {
+    if (!ch || atomic_load_explicit(&ch->closed, memory_order_acquire)) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -408,7 +408,7 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     }
 
     /* 恢复后检查 channel 是否关闭或被销毁 */
-    if (coro->wait_node.freed_by_destroy || ch->closed) {
+    if (coro->wait_node.freed_by_destroy || atomic_load_explicit(&ch->closed, memory_order_acquire)) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -427,7 +427,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
         return COCO_ERROR;
     }
 
-    if (ch->closed && ch->count == 0 && !ch->send_wait_head && !ch->send_select_head) {
+    if (atomic_load_explicit(&ch->closed, memory_order_acquire) && ch->count == 0 && !ch->send_wait_head && !ch->send_select_head) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -545,7 +545,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
-    if (ch->closed && !coro->wait_node.value) {
+    if (atomic_load_explicit(&ch->closed, memory_order_acquire) && !coro->wait_node.value) {
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -559,11 +559,9 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
  * @param ch channel 指针
  */
 void coco_channel_close(coco_channel_t *ch) {
-    if (!ch || ch->closed) {
+    if (!ch || atomic_exchange_explicit(&ch->closed, 1, memory_order_acq_rel)) {
         return;
     }
-
-    ch->closed = 1;
     coco_sched_t *sched = g_current_sched;
 
     /* 唤醒所有普通等待的接收者 */
@@ -686,7 +684,7 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
             }
         } else {
             /* SEND: channel closed */
-            if (ch->closed) {
+            if (atomic_load_explicit(&ch->closed, memory_order_acquire)) {
                 cases[i].result = COCO_ERROR_CHANNEL_CLOSED;
                 return i;
             }
@@ -771,7 +769,7 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
 
         /* Register on channel's select wait queue */
         if (nodes[i].is_send) {
-            if (ch->closed) {
+            if (atomic_load_explicit(&ch->closed, memory_order_acquire)) {
                 /* Channel closed during registration — cleanup and return */
                 for (int j = 0; j < i; j++) {
                     if (nodes[j].registered && nodes[j].chan) {
@@ -845,10 +843,10 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
         coco_channel_t *ch = node->chan;
         if (node->is_send) {
             /* Value was transferred during wakeup or buffered */
-            cases[ready_index].result = ch->closed ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
+            cases[ready_index].result = atomic_load_explicit(&ch->closed, memory_order_acquire) ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
         } else {
             *node->recv_ptr = coro->wait_node.value;
-            cases[ready_index].result = (coro->wait_node.value == NULL && ch->closed)
+            cases[ready_index].result = (coro->wait_node.value == NULL && atomic_load_explicit(&ch->closed, memory_order_acquire))
                                         ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
         }
     }

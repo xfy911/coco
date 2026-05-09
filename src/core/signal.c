@@ -74,10 +74,23 @@ static coco_coro_t *find_coro_by_stack(coco_sched_t *sched, void *fault_addr) {
  * segv_handler - SIGSEGV 信号处理函数
  *
  * 检测栈溢出，尝试增长栈并恢复执行。
+ * The preemption signal is blocked to prevent deadlock during handler execution.
  */
 static void segv_handler(int sig, siginfo_t *info, void *context) {
     (void)sig;
     (void)context;
+
+    /* Block preemption signals (SIGALRM on Linux, SIGURG on macOS)
+     * to prevent signal handler re-entry while holding implicit state.
+     * This avoids deadlock if the preemption timer fires during growth. */
+    sigset_t block_set;
+    sigemptyset(&block_set);
+#if defined(_COCO_PLATFORM_LINUX)
+    sigaddset(&block_set, SIGALRM);
+#elif defined(_COCO_PLATFORM_MACOS)
+    sigaddset(&block_set, SIGURG);
+#endif
+    sigprocmask(SIG_BLOCK, &block_set, NULL);
 
     void *fault_addr = info->si_addr;
     coco_sched_t *sched = g_overflow_sched;
@@ -183,12 +196,17 @@ int coco_signal_init(coco_sched_t *sched) {
         return COCO_ERROR;
     }
 
-    /* 设置 SIGSEGV handler */
+    /* 设置 SIGSEGV handler — also block preemption signals to prevent handler re-entry */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = segv_handler;
     sa.sa_flags = SA_SIGINFO | SA_ONSTACK;  /* 使用替代栈 */
     sigemptyset(&sa.sa_mask);
+#if defined(_COCO_PLATFORM_LINUX)
+    sigaddset(&sa.sa_mask, SIGALRM);
+#elif defined(_COCO_PLATFORM_MACOS)
+    sigaddset(&sa.sa_mask, SIGURG);
+#endif
 
     if (sigaction(SIGSEGV, &sa, NULL) != 0) {
         free(g_sigaltstack.ss_sp);

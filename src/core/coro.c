@@ -552,6 +552,11 @@ void coco_exit(coco_coro_t *coro, void *result) {
         return;
     }
 
+    if (!g_current_coro || g_current_coro != coro) {
+        /* coco_exit must be called from within the coroutine */
+        return;
+    }
+
     coro->state = COCO_STATE_DEAD;
     coro->result = result;
 
@@ -565,6 +570,7 @@ void coco_yield(void) {
     coco_coro_t *coro = g_current_coro;
 
     if (!sched || !coro) {
+        /* coco_yield called outside coroutine — silently return */
         return;
     }
 

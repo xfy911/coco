@@ -22,7 +22,7 @@ int runq_put(coco_processor_t *p, coco_coro_t *g) {
     pthread_mutex_lock(&p->local_runq_lock);
 
     /* 检查是否溢出 */
-    if (p->local_runq_size >= LOCAL_RUNQ_MAX) {
+    if (atomic_load(&p->local_runq_size) >= LOCAL_RUNQ_MAX) {
         pthread_mutex_unlock(&p->local_runq_lock);
         /* 溢出到全局队列 (先释放 local 锁，避免锁嵌套) */
         return runq_put_global(g);
@@ -38,7 +38,7 @@ int runq_put(coco_processor_t *p, coco_coro_t *g) {
         p->local_runq_head = g;
     }
     p->local_runq_tail = g;
-    p->local_runq_size++;
+    atomic_fetch_add(&p->local_runq_size, 1);
 
     pthread_mutex_unlock(&p->local_runq_lock);
     return 0;
@@ -68,7 +68,7 @@ coco_coro_t *runq_get(coco_processor_t *p) {
 
     g->next = NULL;
     g->prev = NULL;
-    p->local_runq_size--;
+    atomic_fetch_sub(&p->local_runq_size, 1);
 
     pthread_mutex_unlock(&p->local_runq_lock);
     return g;
@@ -85,13 +85,13 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
         return NULL;  /* 锁竞争，跳过这个 P */
     }
 
-    if (target->local_runq_size == 0) {
+    if (atomic_load(&target->local_runq_size) == 0) {
         pthread_mutex_unlock(&target->local_runq_lock);
         return NULL;
     }
 
     /* 偷取一半 */
-    uint32_t steal = target->local_runq_size / 2;
+    uint32_t steal = atomic_load(&target->local_runq_size) / 2;
     if (steal == 0) steal = 1;
 
     coco_coro_t *batch = NULL;
@@ -113,7 +113,7 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
         g->next = batch;
         batch = g;
 
-        target->local_runq_size--;
+        atomic_fetch_sub(&target->local_runq_size, 1);
         count++;
     }
 
@@ -133,11 +133,7 @@ uint32_t runq_size(coco_processor_t *p) {
         return 0;
     }
 
-    pthread_mutex_lock(&p->local_runq_lock);
-    uint32_t size = p->local_runq_size;
-    pthread_mutex_unlock(&p->local_runq_lock);
-
-    return size;
+    return atomic_load(&p->local_runq_size);
 }
 
 /* 查询队列是否为空 */

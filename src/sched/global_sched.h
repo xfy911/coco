@@ -80,7 +80,7 @@ typedef struct coco_processor {
     /* 本地运行队列 (锁保护) */
     struct coco_coro *local_runq_head;
     struct coco_coro *local_runq_tail;
-    uint32_t local_runq_size;
+    _Atomic uint32_t local_runq_size;
     pthread_mutex_t local_runq_lock;
 
     /* 当前运行的协程 */

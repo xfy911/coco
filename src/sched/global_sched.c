@@ -221,9 +221,18 @@ int coco_global_runq_put(struct coco_coro *g) {
 
     pthread_mutex_unlock(&g_global_sched->global_runq_lock);
 
-    /* 唤醒空闲的工作线程 */
+    /* 按需唤醒空闲线程: 根据全局队列长度和可用 P 决定唤醒数量
+     * 避免 thundering herd: 只唤醒最少数量的空闲线程 */
+    int to_wake = (int)atomic_load(&g_global_sched->active_coroutines);
+    if (to_wake == 0) to_wake = 1;  /* 至少唤醒一个 */
+    if (to_wake > (int)g_global_sched->processor_count) {
+        to_wake = g_global_sched->processor_count;
+    }
+
     pthread_mutex_lock(&g_global_sched->idle_lock);
-    pthread_cond_broadcast(&g_global_sched->idle_cond);
+    for (int i = 0; i < to_wake; i++) {
+        pthread_cond_signal(&g_global_sched->idle_cond);
+    }
     pthread_mutex_unlock(&g_global_sched->idle_lock);
 
     return 0;

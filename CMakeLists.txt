@@ -13,6 +13,30 @@ if(COCO_ENABLE_COVERAGE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
 endif()
 
+# AddressSanitizer
+option(COCO_ENABLE_ASAN "Enable AddressSanitizer" OFF)
+if(COCO_ENABLE_ASAN)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer -g")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+    message(STATUS "AddressSanitizer enabled")
+endif()
+
+# ThreadSanitizer
+option(COCO_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+if(COCO_ENABLE_TSAN)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -fno-omit-frame-pointer -g")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+    message(STATUS "ThreadSanitizer enabled")
+endif()
+
+# UndefinedBehaviorSanitizer
+option(COCO_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+if(COCO_ENABLE_UBSAN)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=undefined -fno-omit-frame-pointer -g")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=undefined")
+    message(STATUS "UndefinedBehaviorSanitizer enabled")
+endif()
+
 # 平台检测
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(PLATFORM "linux")
@@ -193,6 +217,11 @@ if(COCO_BUILD_TESTS)
         test_stack_growth
         test_preempt
         test_fairness
+        test_long_running
+        stress_coro_count
+        stress_channel_burst
+        stress_timer_wheel
+        stress_io_thunder
     )
 
     # 平台特定测试

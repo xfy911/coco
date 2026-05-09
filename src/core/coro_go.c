@@ -34,9 +34,12 @@ static int select_best_p(void) {
 
     for (uint32_t i = 0; i < gs->processor_count; i++) {
         coco_processor_t *p = gs->processors[i];
-        if (p && p->local_runq_size < min_size) {
-            min_size = p->local_runq_size;
-            best_p = (int)i;
+        if (p) {
+            uint32_t size = atomic_load(&p->local_runq_size);
+            if (size < min_size) {
+                min_size = size;
+                best_p = (int)i;
+            }
         }
     }
 
@@ -108,7 +111,7 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
 
         coco_coro_t *coro = calloc(1, sizeof(coco_coro_t));
         if (!coro) {
-            stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool, stack_top, stack_size);
+            stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool, stack_top, actual_stack_size);
             return NULL;
         }
 
@@ -132,9 +135,9 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
             coco_global_runq_put(coro);
         }
 
-        /* Wake idle workers - broadcast to all for high throughput */
+        /* Wake idle workers - signal one to reduce thundering herd */
         pthread_mutex_lock(&gs->idle_lock);
-        pthread_cond_broadcast(&gs->idle_cond);
+        pthread_cond_signal(&gs->idle_cond);
         pthread_mutex_unlock(&gs->idle_lock);
 
         /* Increment active coroutine count */
