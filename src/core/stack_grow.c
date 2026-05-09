@@ -191,10 +191,14 @@ coco_grow_info_t coco_grow_stack(
 ) {
     coco_grow_info_t info = {0};
 
-    /* Fail-fast: 当 stack_growable=true 但 stack_map==NULL 时返回错误 */
+    /* 保守模式：允许没有 stack_map，只调整帧指针，不调整栈内指针
+     * 注意：如果栈内有指向栈的指针（如局部变量指针），可能导致崩溃
+     * 建议：生产环境使用 stack_map 以确保安全
+     */
     if (stack_growable && stack_map == NULL) {
-        info.result = COCO_GROW_ERROR_NO_STACKMAP;
-        return info;
+        /* 警告但不报错，继续执行保守增长 */
+        fprintf(stderr, "[coco] warning: growing stack without stack_map (coro=%lu)\n",
+                (unsigned long)coro_id);
     }
 
     // Get current stack parameters from context
