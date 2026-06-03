@@ -1,10 +1,10 @@
 /**
- * frame_walker.c - Frame pointer traversal implementation
+ * frame_walker.c - 帧指针遍历实现
  *
- * Implements stack frame walking for dynamic stack growth.
+ * 实现动态栈增长所需的栈帧遍历。
  *
  * @file frame_walker.c
- * @brief Frame walker runtime implementation
+ * @brief 帧指针遍历运行时实现
  */
 
 #include "coco_frame_walker.h"
@@ -12,13 +12,12 @@
 #include <string.h>
 
 /**
- * Walk the frame chain from a suspended coroutine.
+ * 从已挂起协程遍历栈帧链。
  *
- * On x86-64 and ARM64, frame pointers are saved at the beginning
- * of each stack frame, forming a linked list:
- * - FP points to saved previous FP at FP[0]
- * - Return address is saved at FP[8] (or FP+8 on ARM64)
- * - Frame pointers decrease as we go up the stack (stack grows down)
+ * 在 x86-64 和 ARM64 上，帧指针保存在每个栈帧开头，形成链表：
+ * - FP 指向前一个保存的 FP，位于 FP[0]
+ * - 返回地址保存在 FP[8]（或 ARM64 的 FP+8）
+ * - 帧指针向上（栈向下增长）递减
  */
 coco_frame_walk_result_t coco_walk_coro_frames(
     const coco_stack_map_t* stack_map,
@@ -95,9 +94,9 @@ coco_frame_walk_result_t coco_walk_coro_frames(
 }
 
 /**
- * Walk frames with callback visitor.
+ * 使用回调访问者遍历栈帧。
  */
-int coco_walk_frames_with_visitor(
+int coco_walk_frames_with_visitor((
     const coco_stack_map_t* stack_map,
     uintptr_t saved_fp,
     uintptr_t saved_sp,
@@ -145,9 +144,9 @@ int coco_walk_frames_with_visitor(
 }
 
 /**
- * Visit all pointers in a frame using stack map info.
+ * 使用栈映射信息访问帧中的所有指针。
  */
-int coco_visit_frame_pointers(
+int coco_visit_frame_pointers((
     const coco_frame_info_t* frame_info,
     const coco_stack_map_t* stack_map,
     coco_pointer_visitor_fn visitor,
@@ -185,9 +184,9 @@ int coco_visit_frame_pointers(
 }
 
 /**
- * Validate frame chain integrity.
+ * 验证栈帧链完整性。
  */
-bool coco_validate_frame_chain(
+bool coco_validate_frame_chain((
     const coco_frame_walk_result_t* result,
     uintptr_t stack_base,
     uintptr_t stack_limit

@@ -23,7 +23,9 @@ static const size_t size_class_table[STACK_POOL_MULTI_NUM_CLASSES] = {
     STACK_SIZE_1M
 };
 
-/* 获取 size class 索引 */
+/**
+ * 获取 size class 索引（根据请求大小向上取整）
+ */
 int stack_pool_multi_get_class_index(size_t size) {
     for (int i = 0; i < STACK_POOL_MULTI_NUM_CLASSES; i++) {
         if (size <= size_class_table[i]) {
@@ -33,7 +35,9 @@ int stack_pool_multi_get_class_index(size_t size) {
     return -1;  /* 超出范围 */
 }
 
-/* 获取 size class 大小 */
+/**
+ * 获取 size class 大小
+ */
 size_t stack_pool_multi_get_class_size(int class_idx) {
     if (class_idx < 0 || class_idx >= STACK_POOL_MULTI_NUM_CLASSES) {
         return 0;
@@ -41,7 +45,9 @@ size_t stack_pool_multi_get_class_size(int class_idx) {
     return size_class_table[class_idx];
 }
 
-/* 创建栈池 */
+/**
+ * 创建多尺寸栈池
+ */
 stack_pool_multi_t *stack_pool_multi_create(void) {
     stack_pool_multi_t *pool = calloc(1, sizeof(stack_pool_multi_t));
     if (!pool) {
@@ -68,7 +74,9 @@ stack_pool_multi_t *stack_pool_multi_create(void) {
     return pool;
 }
 
-/* 销毁栈池 */
+/**
+ * 销毁栈池并释放所有资源
+ */
 void stack_pool_multi_destroy(stack_pool_multi_t *pool) {
     if (!pool) {
         return;
@@ -87,7 +95,9 @@ void stack_pool_multi_destroy(stack_pool_multi_t *pool) {
     free(pool);
 }
 
-/* 从栈池分配 */
+/**
+ * 从栈池分配栈
+ */
 void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
     if (!pool) {
         return NULL;
@@ -124,7 +134,9 @@ void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
     return alloc_stack_mmap(pool->sizes[class_idx]);
 }
 
-/* 释放栈到池 */
+/**
+ * 释放栈回栈池
+ */
 void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t size) {
     if (!pool || !stack_top) {
         return;
@@ -159,12 +171,16 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
     pool->counts[class_idx]++;
 }
 
-/* 栈使用率检测 API - 委托给公共函数 */
+/**
+ * 获取栈使用率
+ */
 size_t stack_pool_multi_get_usage(void *stack_top, size_t size, void *current_sp) {
     return get_usage(stack_top, size, current_sp);
 }
 
-/* 获取统计信息 */
+/**
+ * 获取栈池统计信息
+ */
 void stack_pool_multi_get_stats(stack_pool_multi_t *pool,
                                 uint64_t *total_allocs,
                                 uint64_t *total_frees,

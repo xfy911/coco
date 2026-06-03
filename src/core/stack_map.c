@@ -1,10 +1,10 @@
 /**
- * stack_map.c - Stack map implementation for dynamic stack growth
+ * stack_map.c - 动态栈增长所需的栈映射实现
  *
- * Implements binary search lookup and memory management for stack maps.
+ * 实现二分查找查找和栈映射的内存管理。
  *
  * @file stack_map.c
- * @brief Stack map runtime implementation
+ * @brief 栈映射运行时实现
  */
 
 #include "coco_stack_map.h"
@@ -15,9 +15,9 @@
 #define COCO_STACK_MAP_MAGIC 0xC0C0
 
 /**
- * Binary search to find function containing the given address.
+ * 二分查找包含给定地址的函数。
  *
- * The function entries are sorted by func_addr for efficient lookup.
+ * 函数条目按 func_addr 排序，以实现高效查找。
  */
 coco_func_map_t* coco_find_func_map(const coco_stack_map_t* map, uint64_t addr) {
     if (!map || map->magic != COCO_STACK_MAP_MAGIC || map->num_funcs == 0) {
@@ -55,13 +55,13 @@ coco_func_map_t* coco_find_func_map(const coco_stack_map_t* map, uint64_t addr) 
 }
 
 /**
- * Load stack map from file.
+ * 从文件加载栈映射。
  *
- * The file format is:
- * - Header: magic (4), version (4), num_funcs (4)
- * - For each function:
+ * 文件格式为：
+ * - 头部：magic (4), version (4), num_funcs (4)
+ * - 对每个函数：
  *   - func_addr (8), func_size (8), frame_size (4), num_pointers (4)
- *   - Pointer descriptors: num_pointers * sizeof(coco_ptr_desc_t)
+ *   - 指针描述符：num_pointers * sizeof(coco_ptr_desc_t)
  */
 coco_stack_map_t* coco_load_stack_map(const char* path) {
     FILE* f = fopen(path, "rb");
@@ -134,7 +134,7 @@ coco_stack_map_t* coco_load_stack_map(const char* path) {
 }
 
 /**
- * Free loaded stack map.
+ * 释放已加载的栈映射。
  */
 void coco_free_stack_map(coco_stack_map_t* map) {
     if (map) {
@@ -143,7 +143,7 @@ void coco_free_stack_map(coco_stack_map_t* map) {
 }
 
 /**
- * Check if address is within stack range.
+ * 检查地址是否在栈范围内。
  */
 bool coco_addr_in_stack(uintptr_t stack_base, uintptr_t stack_limit, uintptr_t addr) {
     // Stack grows downward: stack_base is lowest address, stack_limit is highest

@@ -1,8 +1,8 @@
 /**
- * safety.c - Safety mode implementation for dynamic stack growth
+ * safety.c - 动态栈增长的安全模式实现
  *
  * @file safety.c
- * @brief Safety mode configuration and management
+ * @brief 安全模式配置与管理
  */
 
 #include "coco_safety.h"
@@ -20,7 +20,7 @@
 coco_safety_mode_t g_safety_mode = COCO_SAFETY_NONE;
 
 /**
- * Get default configuration for a safety mode.
+ * 获取指定安全模式的默认配置。
  */
 coco_safety_config_t coco_get_default_config(coco_safety_mode_t mode) {
     coco_safety_config_t config = {0};
@@ -65,7 +65,7 @@ coco_safety_config_t coco_get_default_config(coco_safety_mode_t mode) {
 }
 
 /**
- * Set global safety mode.
+ * 设置全局安全模式。
  */
 coco_safety_mode_t coco_set_safety_mode(coco_safety_mode_t mode) {
     coco_safety_mode_t prev = g_safety_mode;
@@ -74,14 +74,14 @@ coco_safety_mode_t coco_set_safety_mode(coco_safety_mode_t mode) {
 }
 
 /**
- * Get current global safety mode.
+ * 获取当前全局安全模式。
  */
 coco_safety_mode_t coco_get_safety_mode(void) {
     return g_safety_mode;
 }
 
 /**
- * Create a coroutine with specific safety mode.
+ * 以指定安全模式创建协程。
  */
 coco_coro_t* coco_create_safe(
     coco_sched_t* sched,
@@ -128,7 +128,7 @@ coco_coro_t* coco_create_safe(
 }
 
 /**
- * Check if a coroutine can shrink its stack.
+ * 检查协程是否可以收缩栈。
  */
 bool coco_can_shrink_stack(
     const coco_coro_t* coro,
@@ -162,7 +162,7 @@ bool coco_can_shrink_stack(
 }
 
 /**
- * Shrink a coroutine's stack.
+ * 收缩协程栈。
  */
 bool coco_shrink_stack(
     coco_coro_t* coro,
@@ -256,7 +256,7 @@ bool coco_shrink_stack(
 }
 
 /**
- * Scan stack for potential pointers (Level 2 safety).
+ * 扫描栈中的潜在指针（Level 2 安全）。
  */
 uint32_t coco_scan_stack_pointers(
     uintptr_t stack_base,

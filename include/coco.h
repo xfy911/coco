@@ -104,7 +104,10 @@ typedef void (*coco_error_cb)(coco_coro_t *coro, int error_code, const char *msg
  *  @{
  */
 #define COCO_DEFAULT_STACK_SIZE   2048        /**< 2KB - default, matches Go 1.22+ */
+#define COCO_STACK_CONSERVATIVE    (64 * 1024) /**< 64KB - 保守固定栈（不增长） */
 #define COCO_STACK_FIXED          (64 * 1024) /**< 64KB - fixed stack (no growth) */
+
+
 #define COCO_STACK_SMALL          (16 * 1024) /**< 16KB - I/O bound tasks */
 #define COCO_STACK_MEDIUM         (32 * 1024) /**< 32KB - general purpose */
 #define COCO_STACK_LARGE          (128 * 1024)/**< 128KB - recursive/large stack frames */

@@ -1,5 +1,5 @@
 /**
- * global_sched.c - 全局调度器框架实现 (Phase 1)
+ * 全局调度器框架实现 (Phase 1)
  *
  * M:N 多线程调度架构，参考 Go runtime 设计。
  */
@@ -17,13 +17,17 @@
 /* 全局调度器实例 */
 static coco_global_sched_t *g_global_sched = NULL;
 
-/* 获取 CPU 核心数 */
+/**
+ * 获取 CPU 核心数
+ */
 static uint32_t get_cpu_count(void) {
     long count = sysconf(_SC_NPROCESSORS_ONLN);
     return (count > 0) ? (uint32_t)count : 1;
 }
 
-/* 创建处理器 (P) */
+/**
+ * 创建处理器 (P)
+ */
 coco_processor_t *coco_processor_create(uint32_t id) {
     coco_processor_t *p = calloc(1, sizeof(coco_processor_t));
     if (!p) {
@@ -64,7 +68,9 @@ coco_processor_t *coco_processor_create(uint32_t id) {
     return p;
 }
 
-/* 销毁处理器 (P) */
+/**
+ * 销毁处理器 (P)
+ */
 void coco_processor_destroy(coco_processor_t *p) {
     if (!p) {
         return;
@@ -83,7 +89,9 @@ void coco_processor_destroy(coco_processor_t *p) {
     free(p);
 }
 
-/* 创建机器 (M) */
+/**
+ * 创建机器 (M)
+ */
 coco_machine_t *coco_machine_create(uint32_t id) {
     coco_machine_t *m = calloc(1, sizeof(coco_machine_t));
     if (!m) {
@@ -99,14 +107,18 @@ coco_machine_t *coco_machine_create(uint32_t id) {
     return m;
 }
 
-/* 销毁机器 (M) */
+/**
+ * 销毁机器 (M)
+ */
 void coco_machine_destroy(coco_machine_t *m) {
     if (m) {
         free(m);
     }
 }
 
-/* 全局初始化 */
+/**
+ * 全局调度器初始化
+ */
 int coco_global_init(uint32_t num_procs) {
     if (g_global_sched != NULL) {
         return COCO_ERROR;  /* 已初始化 */
@@ -171,7 +183,9 @@ int coco_global_init(uint32_t num_procs) {
     return 0;
 }
 
-/* 全局销毁 */
+/**
+ * 全局调度器销毁
+ */
 void coco_global_destroy(void) {
     if (!g_global_sched) {
         return;
@@ -193,12 +207,16 @@ void coco_global_destroy(void) {
     g_global_sched = NULL;
 }
 
-/* 获取全局调度器 */
+/**
+ * 获取全局调度器实例
+ */
 coco_global_sched_t *coco_global_get(void) {
     return g_global_sched;
 }
 
-/* 全局队列入队 */
+/**
+ * 全局运行队列入队
+ */
 int coco_global_runq_put(struct coco_coro *g) {
     if (!g_global_sched || !g) {
         return COCO_ERROR;
@@ -238,7 +256,9 @@ int coco_global_runq_put(struct coco_coro *g) {
     return 0;
 }
 
-/* 全局队列出队 */
+/**
+ * 全局运行队列出队
+ */
 struct coco_coro *coco_global_runq_get(void) {
     if (!g_global_sched) {
         return NULL;
@@ -268,7 +288,9 @@ struct coco_coro *coco_global_runq_get(void) {
     return g;
 }
 
-/* 全局队列大小 */
+/**
+ * 获取全局队列大小
+ */
 uint64_t coco_global_runq_size(void) {
     if (!g_global_sched) {
         return 0;
@@ -281,12 +303,16 @@ uint64_t coco_global_runq_size(void) {
     return size;
 }
 
-/* 获取处理器数量 */
+/**
+ * 获取处理器 (P) 数量
+ */
 uint32_t coco_processor_count(void) {
     return g_global_sched ? g_global_sched->processor_count : 0;
 }
 
-/* 获取指定处理器 */
+/**
+ * 获取指定处理器 (P)
+ */
 coco_processor_t *coco_processor_get(uint32_t id) {
     if (!g_global_sched || id >= g_global_sched->processor_count) {
         return NULL;
@@ -294,7 +320,9 @@ coco_processor_t *coco_processor_get(uint32_t id) {
     return g_global_sched->processors[id];
 }
 
-/* Worker thread loop */
+/**
+ * 工作线程主循环
+ */
 static void *worker_loop(void *arg) {
     coco_processor_t *p = (coco_processor_t *)arg;
     coco_global_sched_t *gs = coco_global_get();
@@ -387,6 +415,9 @@ static void *worker_loop(void *arg) {
     return NULL;
 }
 
+/**
+ * 启动全局调度器
+ */
 int coco_global_sched_start(uint32_t num_workers) {
     coco_global_sched_t *gs = coco_global_get();
 
@@ -472,6 +503,9 @@ int coco_global_sched_start(uint32_t num_workers) {
     return COCO_OK;
 }
 
+/**
+ * 等待所有协程完成
+ */
 int coco_global_sched_wait(void) {
     coco_global_sched_t *gs = coco_global_get();
     if (!gs) return COCO_ERROR;
@@ -485,6 +519,9 @@ int coco_global_sched_wait(void) {
     return COCO_OK;
 }
 
+/**
+ * 停止全局调度器
+ */
 int coco_global_sched_stop(void) {
     coco_global_sched_t *gs = coco_global_get();
     if (!gs) return COCO_ERROR;
