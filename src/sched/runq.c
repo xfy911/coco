@@ -13,7 +13,9 @@
 #include "runq.h"
 #include <string.h>
 
-/* 本地队列入队 */
+/**
+ * 本地运行队列入队
+ */
 int runq_put(coco_processor_t *p, coco_coro_t *g) {
     if (!p || !g) {
         return -1;
@@ -44,7 +46,9 @@ int runq_put(coco_processor_t *p, coco_coro_t *g) {
     return 0;
 }
 
-/* 本地队列出队 */
+/**
+ * 本地运行队列出队
+ */
 coco_coro_t *runq_get(coco_processor_t *p) {
     if (!p) {
         return NULL;
@@ -74,7 +78,9 @@ coco_coro_t *runq_get(coco_processor_t *p) {
     return g;
 }
 
-/* 工作窃取 - 从目标 P 偷取一半协程 */
+/**
+ * 工作窃取 - 从目标 P 偷取一半协程
+ */
 coco_coro_t *runq_steal(coco_processor_t *target) {
     if (!target) {
         return NULL;
@@ -122,13 +128,17 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
     return batch;
 }
 
-/* 溢出到全局队列 */
+/**
+ * 将协程溢出到全局队列
+ */
 int runq_put_global(coco_coro_t *g) {
     return coco_global_runq_put(g);
 }
 
-/* 负载均衡: 将本地队列尾部一半推入全局队列
- * 调用者必须已持有 local_runq_lock */
+/**
+ * 负载均衡: 将本地队列尾部一半推入全局队列
+ * 调用者必须已持有 local_runq_lock
+ */
 int runq_push_overflow(coco_processor_t *p) {
     if (!p || p->local_runq_size < LOCAL_RUNQ_MAX / 2) {
         return -1;  /* 不需要溢出 */
@@ -161,7 +171,9 @@ int runq_push_overflow(coco_processor_t *p) {
     return pushed;
 }
 
-/* 查询队列大小 */
+/**
+ * 查询本地队列大小
+ */
 uint32_t runq_size(coco_processor_t *p) {
     if (!p) {
         return 0;
@@ -170,7 +182,9 @@ uint32_t runq_size(coco_processor_t *p) {
     return atomic_load(&p->local_runq_size);
 }
 
-/* 查询队列是否为空 */
+/**
+ * 检查本地队列是否为空
+ */
 bool runq_empty(coco_processor_t *p) {
     return runq_size(p) == 0;
 }
