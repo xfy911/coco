@@ -630,11 +630,22 @@ void coco_yield(void) {
     coco_coro_t *coro = g_current_coro;
 
     if (!sched || !coro) {
-        /* coco_yield called outside coroutine — silently return */
         return;
     }
 
-    /* 仅当协程正在运行时才重新入队（否则可能已被 channel 等机制设置为 WAITING） */
+    if (!coro->is_exclusive && coro->hot_slot_idx >= 0) {
+        void *current_sp;
+        coco_hot_read_sp(&current_sp);
+        if (current_sp) {
+            coco_hot_slot_t *slot = &sched->hot_slots[coro->hot_slot_idx];
+            size_t used = (size_t)((char *)slot->stack_top - (char *)current_sp);
+            if (used > coro->stack_used) {
+                coro->stack_used = used;
+            }
+        }
+        hot_lru_move_to_head(sched, &coro->hot_node);
+    }
+
     if (coro->state == COCO_STATE_RUNNING) {
         /* 检查是否在多线程模式下 */
         extern coco_global_sched_t *coco_global_get(void);
