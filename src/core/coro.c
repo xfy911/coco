@@ -114,6 +114,16 @@ coco_sched_t *coco_sched_create(void) {
         return NULL;
     }
 
+    if (coco_hot_slots_init(sched, COCO_HOT_SLOTS_DEFAULT) != COCO_OK) {
+        stack_pool_destroy(sched->stack_pool);
+        coco_poll_cleanup(sched);
+        coco_timer_wheel_destroy(sched->timer_wheel);
+        coco_signal_cleanup();
+        free(sched->coro_table);
+        free(sched);
+        return NULL;
+    }
+
     /* 初始化老化阈值：100ms 后提升优先级 */
     sched->aging_threshold_ms = 100;
 
