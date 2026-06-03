@@ -4,7 +4,8 @@ A high-performance, cross-platform coroutine library written in C.
 
 ## Features
 
-- **Stackful Coroutine**: 64KB fixed stack with guard page for overflow detection
+- **Shared Hot Stacks**: 8×128KB shared stack slots with LRU eviction (10K coroutines < 50MB)
+- **Stackful Coroutine**: Exclusive stacks (64KB+) with guard page for large coroutines
 - **Dynamic Stack Growth**: Opt-in stack growth from 2KB to 8MB for deep recursion
 - **Cooperative Scheduling**: Single-threaded event loop with run queue
 - **Fair Scheduling**: Time-slice based scheduling to prevent starvation
@@ -17,6 +18,22 @@ A high-performance, cross-platform coroutine library written in C.
 - **High Performance**: Context switch < 100ns, preemption latency p99 <= 15ms
 
 ## New in v2.0: Go-like Runtime Features
+
+### Shared Hot Stacks
+
+Coroutines default to shared stacks — 8 hot-resident 128KB slots per scheduler with LRU eviction:
+
+- **Hot path**: Zero-copy resume when coroutine's stack is still in a slot
+- **Cold path**: Lazy backup/restore when evicted by LRU
+- **Exclusive fallback**: Coroutines using >100KB automatically get private stacks (64KB–8MB with growth)
+
+```c
+// Default: shared stack (auto-managed, most memory-efficient)
+coco_create(sched, handler, arg, 0);
+
+// Explicit exclusive stack (for deep recursion or large stack frames)
+coco_create(sched, deep_recursion, arg, 64 * 1024);
+```
 
 ### Dynamic Stack Management
 
