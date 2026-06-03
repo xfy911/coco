@@ -13,7 +13,7 @@
 /* 前向声明 */
 static void free_values(coco_context_t *ctx);
 
-/* 获取当前时间（纳秒） */
+/** 获取当前时间（纳秒） */
 static int64_t get_time_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -24,6 +24,7 @@ static int64_t get_time_ns(void) {
 static coco_context_t *global_background = NULL;
 static pthread_once_t background_once = PTHREAD_ONCE_INIT;
 
+/** 初始化全局 background context */
 static void init_background(void) {
     global_background = calloc(1, sizeof(coco_context_t));
     if (global_background) {
@@ -360,6 +361,7 @@ coco_context_t *coco_context_background(void) {
 static coco_context_t *todo_ctx = NULL;
 static pthread_once_t todo_once = PTHREAD_ONCE_INIT;
 
+/** 初始化 TODO context（永不完成的 context） */
 static void init_todo(void) {
     todo_ctx = calloc(1, sizeof(coco_context_t));
     if (todo_ctx) {
@@ -451,7 +453,7 @@ void *coco_context_value(coco_context_t *ctx, const char *key) {
     return NULL;
 }
 
-/* 释放 value 节点 */
+/** 释放 context 中的 value 节点 */
 static void free_values(coco_context_t *ctx) {
     if (!ctx) {
         return;
