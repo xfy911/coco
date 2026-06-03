@@ -166,6 +166,15 @@ struct coco_coro {
     /* Time-slice fairness (Phase 2) */
     uint64_t runtime_start_ns;        /* 当前运行周期开始时间（纳秒） */
     bool time_slice_expired;          /* 时间片已到期标志 */
+
+    /* Hot stack management (Shared Stack) */
+    void *stack_backup;
+    size_t stack_backup_size;
+    size_t stack_used;
+    int hot_slot_idx;
+    coco_hot_node_t hot_node;
+    uint64_t last_run_tick;
+    bool is_exclusive;
 };
 
 /* 时间轮结构（前置声明） */
@@ -222,6 +231,10 @@ typedef struct iouring_req iouring_req_t;
 /* 批量 I/O 上下文（前置声明） */
 typedef struct coco_batch_io coco_batch_io_t;
 
+/* Hot stack types (defined in core/hot_stack.h) */
+typedef struct coco_hot_slot coco_hot_slot_t;
+typedef struct coco_hot_node coco_hot_node_t;
+
 /* 调度器结构 */
 struct coco_sched {
     coco_coro_t *current;      /* 当前运行协程 */
@@ -268,6 +281,14 @@ struct coco_sched {
 
     /* Stack map for dynamic stack growth (Phase 11) */
     struct coco_stack_map *stack_map;  /* Loaded stack map for pointer adjustment */
+
+    /* Hot stack management (Shared Stack) */
+    coco_hot_slot_t *hot_slots;
+    int hot_slot_count;
+    coco_hot_node_t *hot_lru_head;
+    coco_hot_node_t *hot_lru_tail;
+    int hot_coro_count;
+    uint64_t sched_tick;
 };
 
 /* 上下文 API (汇编实现) */
