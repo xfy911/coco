@@ -167,6 +167,8 @@ void coco_sched_destroy(coco_sched_t *sched) {
     /* 清理异步抢占（Phase 3）*/
     coco_preempt_cleanup();
 
+    coco_hot_slots_destroy(sched);
+
     /* 清理所有协程 */
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
         coco_coro_t *coro = sched->coro_table[i];
