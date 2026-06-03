@@ -239,6 +239,7 @@ if(COCO_BUILD_TESTS)
         stress_channel_burst
         stress_timer_wheel
         stress_io_thunder
+        test_hot_stack
     )
 
     # 平台特定测试
