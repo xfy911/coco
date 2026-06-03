@@ -362,6 +362,17 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
             void *dst = (char *)slot->stack_top - coro->stack_used;
             memcpy(dst, coro->stack_backup, coro->stack_used);
             ptrdiff_t delta = (ptrdiff_t)((char *)slot->stack_top - (char *)coro->stack_top);
+            if (delta != 0) {
+                uintptr_t old_base = (uintptr_t)coro->stack_top - COCO_HOT_STACK_SIZE;
+                uintptr_t old_top = (uintptr_t)coro->stack_top;
+                uintptr_t *p = (uintptr_t *)dst;
+                uintptr_t *end = (uintptr_t *)((char *)dst + coro->stack_used);
+                for (; p < end; p++) {
+                    if (*p >= old_base && *p < old_top) {
+                        *p = (uintptr_t)((char *)*p + delta);
+                    }
+                }
+            }
             coro->ctx.sp = (char *)coro->ctx.sp + delta;
             if (coro->ctx.fp) {
                 coro->ctx.fp = (char *)coro->ctx.fp + delta;
@@ -379,6 +390,14 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
         sched->hot_coro_count++;
 
         coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+    }
+
+    if (!coro->is_exclusive && coro->hot_slot_idx >= 0) {
+        coco_hot_slot_t *slot = &sched->hot_slots[coro->hot_slot_idx];
+        size_t used = (size_t)((char *)slot->stack_top - (char *)coro->ctx.sp);
+        if (used > coro->stack_used) {
+            coro->stack_used = used;
+        }
     }
 }
 
@@ -737,10 +756,12 @@ void coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb) {
 }
 
 size_t coco_get_stack_usage(coco_coro_t *coro) {
-    if (!coro || coro->stack_high_water_mark == 0) {
-        return 0;
+    if (!coro) return 0;
+    if (coro->is_exclusive) {
+        if (coro->stack_high_water_mark == 0) return 0;
+        return (size_t)coro->stack_top - coro->stack_high_water_mark;
     }
-    return (size_t)coro->stack_top - coro->stack_high_water_mark;
+    return coro->stack_used;
 }
 
 void coco_set_priority(coco_coro_t *coro, coco_priority_t priority) {
