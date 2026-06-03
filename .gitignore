@@ -25,6 +25,9 @@ Thumbs.db
 # OMC (oh-my-claudecode)
 .omc/
 
+# Superpowers
+docs/superpowers/
+
 # Debug
 *.dSYM/
 *.out

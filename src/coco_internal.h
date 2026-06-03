@@ -106,6 +106,8 @@ typedef struct coco_select_node {
     struct coco_select_node *next; /* Link to next node in same select */
 } coco_select_node_t;
 
+#include "core/hot_stack.h"
+
 /* 协程结构 */
 struct coco_coro {
     uint64_t id;
@@ -230,10 +232,6 @@ typedef struct iouring_req iouring_req_t;
 
 /* 批量 I/O 上下文（前置声明） */
 typedef struct coco_batch_io coco_batch_io_t;
-
-/* Hot stack types (defined in core/hot_stack.h) */
-typedef struct coco_hot_slot coco_hot_slot_t;
-typedef struct coco_hot_node coco_hot_node_t;
 
 /* 调度器结构 */
 struct coco_sched {

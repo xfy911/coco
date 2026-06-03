@@ -240,6 +240,7 @@ if(COCO_BUILD_TESTS)
         stress_timer_wheel
         stress_io_thunder
         test_hot_stack
+        test_shared_stack_stress
     )
 
     # 平台特定测试
@@ -269,6 +270,7 @@ if(COCO_BUILD_TESTS)
         bench_io_backend
         bench_preempt
         bench_stack
+        bench_hot_stack
     )
 
     foreach(bench_name ${BENCH_TESTS})
