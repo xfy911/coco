@@ -158,3 +158,32 @@ static void backup_coro_stack(coco_coro_t *coro, coco_hot_slot_t *slot) {
     }
     memcpy(coro->stack_backup, src, coro->stack_used);
 }
+
+coco_hot_slot_t *hot_slot_acquire(coco_sched_t *sched, coco_coro_t *coro) {
+    coco_hot_slot_t *slot = find_free_slot(sched, coro);
+    if (slot) return slot;
+
+    coco_hot_slot_t *victim_slot = find_eviction_victim_slot(sched, coro);
+    if (!victim_slot) return NULL;
+
+    coco_coro_t *victim = victim_slot->occupant;
+    backup_coro_stack(victim, victim_slot);
+    victim->hot_slot_idx = -1;
+    hot_lru_remove(sched, &victim->hot_node);
+    sched->hot_coro_count--;
+    victim_slot->occupant = NULL;
+    victim_slot->in_use = false;
+
+    return victim_slot;
+}
+
+void hot_slot_release(coco_sched_t *sched, coco_coro_t *coro) {
+    if (!coro || coro->hot_slot_idx < 0) return;
+
+    coco_hot_slot_t *slot = &sched->hot_slots[coro->hot_slot_idx];
+    slot->in_use = false;
+    slot->occupant = NULL;
+    hot_lru_remove(sched, &coro->hot_node);
+    sched->hot_coro_count--;
+    coro->hot_slot_idx = -1;
+}
