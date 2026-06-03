@@ -620,7 +620,15 @@ void coco_exit(coco_coro_t *coro, void *result) {
     coro->state = COCO_STATE_DEAD;
     coro->result = result;
 
-    /* 切换回调度器 */
+    coco_sched_t *sched = g_current_sched;
+    if (!coro->is_exclusive && coro->hot_slot_idx >= 0 && sched) {
+        hot_slot_release(sched, coro);
+    }
+    if (coro->stack_backup) {
+        free(coro->stack_backup);
+        coro->stack_backup = NULL;
+    }
+
     g_current_coro = NULL;
     coco_ctx_switch(&coro->ctx, g_return_ctx);
 }
