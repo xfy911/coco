@@ -194,7 +194,11 @@ int coro_migrate_to_exclusive(coco_sched_t *sched, coco_coro_t *coro) {
     coco_hot_slot_t *slot = &sched->hot_slots[coro->hot_slot_idx];
 
     size_t page_size = get_page_size();
-    size_t total_size = COCO_STACK_CONSERVATIVE + page_size;
+    size_t stack_size = COCO_STACK_CONSERVATIVE;
+    if (coro->stack_used > stack_size) {
+        stack_size = (coro->stack_used + page_size - 1) & ~(page_size - 1);
+    }
+    size_t total_size = stack_size + page_size;
 
     void *base = mmap(NULL, total_size, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -220,12 +224,12 @@ int coro_migrate_to_exclusive(coco_sched_t *sched, coco_coro_t *coro) {
     coro->hot_slot_idx = -1;
 
     coro->is_exclusive = true;
-    coro->stack_base = base;
+    coro->stack_base = (char *)base + page_size;
     coro->stack_top = dst_top;
-    coro->stack_size = COCO_STACK_CONSERVATIVE;
+    coro->stack_size = stack_size;
     coro->stack_from_pool = false;
     coro->stack_growable = true;
-    coro->current_stack_size = COCO_STACK_CONSERVATIVE;
+    coro->current_stack_size = stack_size;
     coro->max_stack_size = COCO_STACK_MAX_SIZE;
 
     ptrdiff_t delta = (char *)dst_top - (char *)slot->stack_top;
@@ -233,8 +237,8 @@ int coro_migrate_to_exclusive(coco_sched_t *sched, coco_coro_t *coro) {
     if (coro->ctx.fp) {
         coro->ctx.fp = (char *)coro->ctx.fp + delta;
     }
-    coro->ctx.stack_base = base;
-    coro->ctx.stack_limit = (void *)((uintptr_t)dst_top - page_size);
+    coro->ctx.stack_base = (char *)base + page_size;
+    coro->ctx.stack_limit = (char *)base + page_size;
 
     free(coro->stack_backup);
     coro->stack_backup = NULL;
