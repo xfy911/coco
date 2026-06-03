@@ -159,12 +159,26 @@ static void test_hot_slot_acquire_fills_free(void) {
     printf("\n[TEST 5] hot_slot_acquire fills free slots\n");
 
     coco_sched_t *sched = create_test_sched();
-    coco_coro_t *coros[8];
 
-    for (int i = 0; i < 8; i++) {
+    TEST_ASSERT(sched->hot_slots[0].reserved == true, "slot 0 is reserved");
+    TEST_ASSERT(sched->hot_slots[1].reserved == false, "slot 1 is not reserved");
+
+    coco_coro_t *high_coro = create_test_coro(0);
+    high_coro->priority = COCO_PRIORITY_HIGH;
+    coco_hot_slot_t *hs = hot_slot_acquire(sched, high_coro);
+    TEST_ASSERT(hs == &sched->hot_slots[0], "HIGH coro gets reserved slot 0");
+    hs->occupant = high_coro;
+    hs->in_use = true;
+    high_coro->hot_slot_idx = 0;
+    hot_lru_insert_head(sched, &high_coro->hot_node);
+    sched->hot_coro_count++;
+
+    coco_coro_t *coros[7];
+    for (int i = 0; i < 7; i++) {
         coros[i] = create_test_coro(i + 1);
         coco_hot_slot_t *slot = hot_slot_acquire(sched, coros[i]);
         TEST_ASSERT(slot != NULL, "acquired slot");
+        TEST_ASSERT(slot != &sched->hot_slots[0], "not reserved slot");
 
         slot->occupant = coros[i];
         slot->in_use = true;
@@ -180,7 +194,8 @@ static void test_hot_slot_acquire_fills_free(void) {
     TEST_ASSERT(all_in_use, "all slots in use");
     TEST_ASSERT(sched->hot_coro_count == 8, "hot coro count is 8");
 
-    for (int i = 0; i < 8; i++) {
+    free_test_coro(high_coro);
+    for (int i = 0; i < 7; i++) {
         free_test_coro(coros[i]);
     }
     destroy_test_sched(sched);
@@ -190,9 +205,20 @@ static void test_hot_slot_acquire_evicts_when_full(void) {
     printf("\n[TEST 6] hot_slot_acquire evicts when full\n");
 
     coco_sched_t *sched = create_test_sched();
-    coco_coro_t *coros[9];
 
-    for (int i = 0; i < 8; i++) {
+    coco_coro_t *high_coro = create_test_coro(0);
+    high_coro->priority = COCO_PRIORITY_HIGH;
+    high_coro->stack_used = 64;
+    coco_hot_slot_t *hs = hot_slot_acquire(sched, high_coro);
+    assert(hs == &sched->hot_slots[0]);
+    hs->occupant = high_coro;
+    hs->in_use = true;
+    high_coro->hot_slot_idx = 0;
+    hot_lru_insert_head(sched, &high_coro->hot_node);
+    sched->hot_coro_count++;
+
+    coco_coro_t *coros[7];
+    for (int i = 0; i < 7; i++) {
         coros[i] = create_test_coro(i + 1);
         coros[i]->stack_used = 64;
         coco_hot_slot_t *slot = hot_slot_acquire(sched, coros[i]);
@@ -207,13 +233,13 @@ static void test_hot_slot_acquire_evicts_when_full(void) {
 
     TEST_ASSERT(sched->hot_coro_count == 8, "8 slots occupied");
 
-    coros[8] = create_test_coro(9);
-    coros[8]->stack_used = 64;
-    coco_hot_slot_t *slot9 = hot_slot_acquire(sched, coros[8]);
+    coco_coro_t *extra = create_test_coro(9);
+    extra->stack_used = 64;
+    coco_hot_slot_t *slot9 = hot_slot_acquire(sched, extra);
     TEST_ASSERT(slot9 != NULL, "acquired slot via eviction");
 
     coco_coro_t *evicted = NULL;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 7; i++) {
         if (coros[i]->hot_slot_idx == -1) {
             evicted = coros[i];
             break;
@@ -222,9 +248,11 @@ static void test_hot_slot_acquire_evicts_when_full(void) {
     TEST_ASSERT(evicted != NULL, "a coro was evicted");
     TEST_ASSERT(evicted->stack_backup != NULL, "evicted coro has stack backup");
 
-    for (int i = 0; i < 9; i++) {
+    free_test_coro(high_coro);
+    for (int i = 0; i < 7; i++) {
         free_test_coro(coros[i]);
     }
+    free_test_coro(extra);
     destroy_test_sched(sched);
 }
 
@@ -275,16 +303,16 @@ static void test_priority_reserved_slot(void) {
     hot_lru_insert_head(sched, &high_coro->hot_node);
     sched->hot_coro_count++;
 
-    for (int i = 1; i < sched->hot_slot_count; i++) {
-        coco_coro_t *normal_coro = create_test_coro(i + 10);
-        coco_hot_slot_t *ns = hot_slot_acquire(sched, normal_coro);
+    coco_coro_t *normal_coros[7];
+    for (int i = 0; i < 7; i++) {
+        normal_coros[i] = create_test_coro(i + 10);
+        coco_hot_slot_t *ns = hot_slot_acquire(sched, normal_coros[i]);
         assert(ns != NULL);
-        ns->occupant = normal_coro;
+        ns->occupant = normal_coros[i];
         ns->in_use = true;
-        normal_coro->hot_slot_idx = (int)(ns - sched->hot_slots);
-        hot_lru_insert_head(sched, &normal_coro->hot_node);
+        normal_coros[i]->hot_slot_idx = (int)(ns - sched->hot_slots);
+        hot_lru_insert_head(sched, &normal_coros[i]->hot_node);
         sched->hot_coro_count++;
-        free_test_coro(normal_coro);
     }
 
     coco_coro_t *normal_last = create_test_coro(99);
@@ -296,6 +324,9 @@ static void test_priority_reserved_slot(void) {
     TEST_ASSERT(ns_idx != 0, "NORMAL coro did not get reserved slot 0");
 
     free_test_coro(high_coro);
+    for (int i = 0; i < 7; i++) {
+        free_test_coro(normal_coros[i]);
+    }
     free_test_coro(normal_last);
     destroy_test_sched(sched);
 }
