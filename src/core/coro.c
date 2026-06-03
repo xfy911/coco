@@ -4,6 +4,7 @@
 
 #include "../coco_internal.h"
 #include "stack_pool.h"
+#include "hot_stack.h"
 #include "../../include/coco_stack_map.h"
 #include "../sched/global_sched.h"
 #include <stdlib.h>
