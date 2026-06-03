@@ -106,3 +106,13 @@ void hot_lru_remove(coco_sched_t *sched, coco_hot_node_t *node) {
     node->next = NULL;
     node->prev = NULL;
 }
+
+void coco_hot_read_sp(void **sp) {
+#if defined(__x86_64__) || defined(_M_X64)
+    __asm__ volatile ("mov %%rsp, %0" : "=r"(*sp));
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    __asm__ volatile ("mov %0, sp" : "=r"(*sp));
+#else
+    *sp = NULL;
+#endif
+}
