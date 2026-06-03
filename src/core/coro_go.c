@@ -18,7 +18,7 @@ extern void coro_entry_wrapper(void *arg);
 /* 外部声明 - 在 safety.c 中定义 */
 extern coco_safety_mode_t g_safety_mode;
 
-/* 选择最佳 P */
+/* 选择最佳 P（负载最轻的处理器） */
 static int select_best_p(void) {
     coco_global_sched_t *gs = coco_global_get();
     if (!gs || gs->processor_count == 0) {
@@ -46,12 +46,16 @@ static int select_best_p(void) {
     return best_p;
 }
 
-/* coco_go - 自动选择最佳 P */
+/**
+ * coco_go - 自动选择最佳 P 启动协程
+ */
 coco_coro_t *coco_go(void (*entry)(void*), void *arg) {
     return coco_go_with_opts(entry, arg, NULL);
 }
 
-/* coco_go_on - 在指定 P 上启动 */
+/**
+ * coco_go_on - 在指定 P 上启动协程
+ */
 coco_coro_t *coco_go_on(int p_id, void (*entry)(void*), void *arg) {
     coco_go_opts_t opts = {
         .stack_size = 0,
@@ -62,7 +66,9 @@ coco_coro_t *coco_go_on(int p_id, void (*entry)(void*), void *arg) {
     return coco_go_with_opts(entry, arg, &opts);
 }
 
-/* coco_go_with_opts - 带选项启动 */
+/**
+ * coco_go_with_opts - 带选项启动协程
+ */
 coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
                                 const coco_go_opts_t *opts) {
     size_t stack_size = COCO_DEFAULT_STACK_SIZE;
