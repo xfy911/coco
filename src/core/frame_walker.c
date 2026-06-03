@@ -22,7 +22,7 @@
 coco_frame_walk_result_t coco_walk_coro_frames(
     const coco_stack_map_t* stack_map,
     uintptr_t saved_fp,
-    uintptr_t saved_sp,
+    uintptr_t saved_sp __attribute__((unused)),
     uintptr_t stack_base,
     uintptr_t stack_limit
 ) {
@@ -96,7 +96,7 @@ coco_frame_walk_result_t coco_walk_coro_frames(
 /**
  * 使用回调访问者遍历栈帧。
  */
-int coco_walk_frames_with_visitor((
+int coco_walk_frames_with_visitor(
     const coco_stack_map_t* stack_map,
     uintptr_t saved_fp,
     uintptr_t saved_sp,
@@ -146,7 +146,7 @@ int coco_walk_frames_with_visitor((
 /**
  * 使用栈映射信息访问帧中的所有指针。
  */
-int coco_visit_frame_pointers((
+int coco_visit_frame_pointers(
     const coco_frame_info_t* frame_info,
     const coco_stack_map_t* stack_map,
     coco_pointer_visitor_fn visitor,
@@ -186,7 +186,7 @@ int coco_visit_frame_pointers((
 /**
  * 验证栈帧链完整性。
  */
-bool coco_validate_frame_chain((
+bool coco_validate_frame_chain(
     const coco_frame_walk_result_t* result,
     uintptr_t stack_base,
     uintptr_t stack_limit
