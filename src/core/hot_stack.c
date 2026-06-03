@@ -247,9 +247,9 @@ int coro_migrate_to_exclusive(coco_sched_t *sched, coco_coro_t *coro) {
 }
 
 void coro_migrate_prepare(coco_sched_t *from, coco_coro_t *coro) {
-    if (!coro) return;
+    if (!coro || !from || !from->hot_slots) return;
     if (coro->is_exclusive) return;
-    if (coro->hot_slot_idx < 0) return;
+    if (coro->hot_slot_idx < 0 || coro->hot_slot_idx >= from->hot_slot_count) return;
 
     coco_hot_slot_t *slot = &from->hot_slots[coro->hot_slot_idx];
     backup_coro_stack(coro, slot);
