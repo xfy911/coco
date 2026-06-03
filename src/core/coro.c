@@ -484,64 +484,59 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
         return NULL;
     }
 
-    /* 默认栈大小 2KB（与 Go 1.22+ 一致） */
-    if (stack_size == 0) {
-        stack_size = COCO_DEFAULT_STACK_SIZE;
-    }
-
-    /* 分配协程结构 */
     coco_coro_t *coro = calloc(1, sizeof(coco_coro_t));
     if (!coro) {
         return NULL;
     }
 
-    /* 动态栈启用条件：
-     * - stack_size < COCO_STACK_FIXED (64KB)：默认启用动态增长
-     * - stack_size >= COCO_STACK_FIXED：使用静态栈（不增长）
-     * 这意味着默认行为是动态栈，大栈为静态栈
-     */
-    bool enable_growable = (stack_size < COCO_STACK_FIXED);
+    coro->hot_slot_idx = -1;
+    coro->hot_node.coro = coro;
+    coro->is_exclusive = false;
+    coro->stack_backup = NULL;
+    coro->stack_backup_size = 0;
+    coro->stack_used = 0;
 
-    /* 从栈池分配栈 */
-    coro->stack_top = stack_pool_alloc(sched->stack_pool, stack_size);
-    if (!coro->stack_top) {
-        free(coro);
-        return NULL;
-    }
-    coro->stack_base = (void*)((uintptr_t)coro->stack_top - stack_size - 4096);
-    coro->stack_size = stack_size;
-    coro->stack_from_pool = true;  /* 标记栈来自池 */
+    bool request_exclusive = (stack_size != 0 && stack_size >= COCO_STACK_FIXED);
 
-    /* 设置动态栈属性 */
-    if (enable_growable) {
-        coro->stack_growable = true;
-        coro->current_stack_size = stack_size;
-        coro->max_stack_size = COCO_STACK_MAX_SIZE;
-        /* 设置上下文的栈边界用于溢出检测 */
-        coro->ctx.stack_base = coro->stack_base;
-        coro->ctx.stack_limit = (void*)((uintptr_t)coro->stack_top - 4096);
-    } else {
+    if (request_exclusive) {
+        coro->stack_top = stack_pool_alloc(sched->stack_pool, stack_size);
+        if (!coro->stack_top) {
+            free(coro);
+            return NULL;
+        }
+        coro->stack_base = (void*)((uintptr_t)coro->stack_top - stack_size - 4096);
+        coro->stack_size = stack_size;
+        coro->stack_from_pool = true;
+        coro->is_exclusive = true;
+
         coro->stack_growable = false;
         coro->current_stack_size = stack_size;
-        coro->max_stack_size = stack_size;  /* 固定栈，不增长 */
+        coro->max_stack_size = stack_size;
+
+        coco_ctx_init(&coro->ctx, coro->stack_top, coro_entry_wrapper, arg);
+    } else {
+        coro->stack_base = NULL;
+        coro->stack_top = NULL;
+        coro->stack_size = 0;
+        coro->stack_from_pool = false;
+        coro->stack_growable = false;
+        coro->current_stack_size = 0;
+        coro->max_stack_size = 0;
+
+        coco_ctx_init(&coro->ctx, sched->hot_slots[0].stack_top,
+                      coro_entry_wrapper, arg);
     }
 
-    /* 初始化上下文 */
-    coco_ctx_init(&coro->ctx, coro->stack_top, coro_entry_wrapper, arg);
-
-    /* 设置协程属性 */
     coro->id = sched->next_id++;
     coro->state = COCO_STATE_CREATED;
     coro->entry = entry;
     coro->arg = arg;
     coro->wait_fd = -1;
-    coro->stack_high_water_mark = 0;  /* 遥测初始化 */
-    coro->priority = COCO_PRIORITY_NORMAL;  /* 默认优先级 */
+    coro->stack_high_water_mark = 0;
+    coro->priority = COCO_PRIORITY_NORMAL;
     coro->ready_timestamp = 0;
 
-    /* 添加到协程池 (ID 超过容量时扩展表) */
     if (coro->id >= sched->coro_capacity) {
-        /* Grow coro_table to accommodate new ID */
         uint32_t new_cap = sched->coro_capacity * 2;
         while (new_cap <= coro->id) {
             new_cap *= 2;
@@ -559,7 +554,6 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     }
     sched->coro_count++;
 
-    /* 入队到就绪队列 */
     enqueue_ready(sched, coro);
 
     return coro;
