@@ -187,3 +187,72 @@ void hot_slot_release(coco_sched_t *sched, coco_coro_t *coro) {
     sched->hot_coro_count--;
     coro->hot_slot_idx = -1;
 }
+
+int coro_migrate_to_exclusive(coco_sched_t *sched, coco_coro_t *coro) {
+    if (!coro || coro->hot_slot_idx < 0) return COCO_ERROR;
+
+    coco_hot_slot_t *slot = &sched->hot_slots[coro->hot_slot_idx];
+
+    size_t page_size = get_page_size();
+    size_t total_size = COCO_STACK_CONSERVATIVE + page_size;
+
+    void *base = mmap(NULL, total_size, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (base == MAP_FAILED) return COCO_ERROR_NOMEM;
+
+    if (mprotect(base, page_size, PROT_NONE) != 0) {
+        munmap(base, total_size);
+        return COCO_ERROR_NOMEM;
+    }
+
+    void *dst_top = (char *)base + total_size;
+
+    if (coro->stack_used > 0) {
+        void *src = (char *)slot->stack_top - coro->stack_used;
+        void *dst = (char *)dst_top - coro->stack_used;
+        memcpy(dst, src, coro->stack_used);
+    }
+
+    slot->in_use = false;
+    slot->occupant = NULL;
+    hot_lru_remove(sched, &coro->hot_node);
+    sched->hot_coro_count--;
+    coro->hot_slot_idx = -1;
+
+    coro->is_exclusive = true;
+    coro->stack_base = base;
+    coro->stack_top = dst_top;
+    coro->stack_size = COCO_STACK_CONSERVATIVE;
+    coro->stack_from_pool = false;
+    coro->stack_growable = true;
+    coro->current_stack_size = COCO_STACK_CONSERVATIVE;
+    coro->max_stack_size = COCO_STACK_MAX_SIZE;
+
+    ptrdiff_t delta = (char *)dst_top - (char *)slot->stack_top;
+    coro->ctx.sp = (char *)coro->ctx.sp + delta;
+    if (coro->ctx.fp) {
+        coro->ctx.fp = (char *)coro->ctx.fp + delta;
+    }
+    coro->ctx.stack_base = base;
+    coro->ctx.stack_limit = (void *)((uintptr_t)dst_top - page_size);
+
+    free(coro->stack_backup);
+    coro->stack_backup = NULL;
+
+    return COCO_OK;
+}
+
+void coro_migrate_prepare(coco_sched_t *from, coco_coro_t *coro) {
+    if (!coro) return;
+    if (coro->is_exclusive) return;
+    if (coro->hot_slot_idx < 0) return;
+
+    coco_hot_slot_t *slot = &from->hot_slots[coro->hot_slot_idx];
+    backup_coro_stack(coro, slot);
+
+    slot->in_use = false;
+    slot->occupant = NULL;
+    hot_lru_remove(from, &coro->hot_node);
+    from->hot_coro_count--;
+    coro->hot_slot_idx = -1;
+}
