@@ -694,16 +694,18 @@ void coco_destroy(coco_coro_t *coro) {
     /* Cleanup select state if coroutine is destroyed while in select */
     coco_select_cleanup(coro);
 
-    if (coro->stack_base) {
+    if (coro->is_exclusive && coro->stack_base) {
         coco_sched_t *sched = g_current_sched;
         if (coro->stack_from_pool && sched && sched->stack_pool) {
-            /* 栈来自池，归还给池 */
             stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
         } else {
-            /* 栈是直接 mmap 分配的（增长后或无池），直接 munmap */
             coco_stack_free(coro->stack_top, coro->stack_size);
         }
         coro->stack_base = NULL;
+    }
+    if (coro->stack_backup) {
+        free(coro->stack_backup);
+        coro->stack_backup = NULL;
     }
     free(coro);
 }
