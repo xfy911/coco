@@ -11,6 +11,7 @@
  */
 
 #include "runq.h"
+#include "../core/hot_stack.h"
 #include <string.h>
 
 /**
@@ -141,10 +142,12 @@ int runq_put_global(coco_coro_t *g) {
  */
 int runq_push_overflow(coco_processor_t *p) {
     if (!p || p->local_runq_size < LOCAL_RUNQ_MAX / 2) {
-        return -1;  /* 不需要溢出 */
+        return -1;
     }
 
-    /* 偷取一半: 从尾部取 */
+    extern _Thread_local coco_sched_t *g_current_sched;
+    coco_sched_t *from = g_current_sched;
+
     uint32_t push = p->local_runq_size / 2;
     int pushed = 0;
 
@@ -162,7 +165,8 @@ int runq_push_overflow(coco_processor_t *p) {
         g->next = NULL;
         p->local_runq_size--;
 
-        /* 推入全局队列 */
+        coro_migrate_prepare(from, g);
+
         if (runq_put_global(g) == 0) {
             pushed++;
         }

@@ -12,6 +12,7 @@
 #include "sched.h"
 #include "runq.h"
 #include "global_sched.h"
+#include "../core/hot_stack.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,6 +45,8 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
     g = coco_global_runq_get();
     if (g) {
         tl_steal_fail_count = 0;
+        coco_sched_t *from = coco_global_get()->main_sched;
+        coro_migrate_prepare(from, g);
         return g;
     }
 
@@ -81,10 +84,12 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
 
         g = runq_steal(target);
         if (g) {
-            /* 偷取成功：将批次放入本地队列，返回第一个 */
             tl_steal_fail_count = 0;
             record_steal_attempt();
             record_steal_success();
+
+            coco_sched_t *from = sched->main_sched;
+            coro_migrate_prepare(from, g);
 
             coco_coro_t *next = g->next;
             if (next) {
@@ -94,6 +99,7 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
                     coco_coro_t *n = next->next;
                     next->next = NULL;
                     next->prev = NULL;
+                    coro_migrate_prepare(from, next);
                     runq_put(p, next);
                     next = n;
                 }
