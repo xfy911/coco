@@ -69,3 +69,40 @@ void coco_hot_slots_destroy(coco_sched_t *sched) {
     sched->hot_lru_tail = NULL;
     sched->hot_coro_count = 0;
 }
+
+void hot_lru_insert_head(coco_sched_t *sched, coco_hot_node_t *node) {
+    node->prev = NULL;
+    node->next = sched->hot_lru_head;
+
+    if (sched->hot_lru_head) {
+        sched->hot_lru_head->prev = node;
+    } else {
+        sched->hot_lru_tail = node;
+    }
+
+    sched->hot_lru_head = node;
+}
+
+void hot_lru_move_to_head(coco_sched_t *sched, coco_hot_node_t *node) {
+    if (node == sched->hot_lru_head) return;
+
+    hot_lru_remove(sched, node);
+    hot_lru_insert_head(sched, node);
+}
+
+void hot_lru_remove(coco_sched_t *sched, coco_hot_node_t *node) {
+    if (node->prev) {
+        node->prev->next = node->next;
+    } else {
+        sched->hot_lru_head = node->next;
+    }
+
+    if (node->next) {
+        node->next->prev = node->prev;
+    } else {
+        sched->hot_lru_tail = node->prev;
+    }
+
+    node->next = NULL;
+    node->prev = NULL;
+}
