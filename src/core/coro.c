@@ -312,46 +312,73 @@ static coco_coro_t *dequeue_ready(coco_sched_t *sched) {
     return NULL;
 }
 
-/* 切换到协程 */
 static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     g_current_coro = coro;
     sched->current = coro;
     coro->state = COCO_STATE_RUNNING;
 
-    /* 记录运行开始时间（Phase 2 时间片公平调度）*/
-    if (sched->fairness_enabled) {
-        coro->runtime_start_ns = coco_get_time_fast();
-        coro->time_slice_expired = false;
-    }
+    sched->sched_tick++;
+    coro->last_run_tick = sched->sched_tick;
 
-    /* 初始化遥测（首次切换） */
-    if (coro->stack_high_water_mark == 0) {
-        coro->stack_high_water_mark = (size_t)coro->stack_top;
-    }
-
-    /* 启用异步抢占定时器（Phase 3）*/
-    coco_preempt_arm();
-
-    /* 设置溢出恢复点（仅对可增长协程） */
-    if (coro->stack_growable) {
-        if (coco_set_overflow_checkpoint() == 0) {
-            /* 正常执行 */
-            coco_ctx_switch(&sched->main_ctx, &coro->ctx);
-        } else {
-            /* 从栈溢出恢复，coro 状态已由 handler 设置 */
+    if (coro->is_exclusive) {
+        if (sched->fairness_enabled) {
+            coro->runtime_start_ns = coco_get_time_fast();
+            coro->time_slice_expired = false;
         }
-    } else {
-        /* 固定栈协程直接切换 */
+
+        if (coro->stack_high_water_mark == 0) {
+            coro->stack_high_water_mark = (size_t)coro->stack_top;
+        }
+
+        coco_preempt_arm();
+
+        if (coro->stack_growable) {
+            if (coco_set_overflow_checkpoint() == 0) {
+                coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+            }
+        } else {
+            coco_ctx_switch(&sched->main_ctx, &coro->ctx);
+        }
+
+        coco_preempt_disarm();
+
+        size_t current_sp = (size_t)coro->ctx.sp;
+        if (current_sp < coro->stack_high_water_mark) {
+            coro->stack_high_water_mark = current_sp;
+        }
+    } else if (coro->hot_slot_idx >= 0) {
+        hot_lru_move_to_head(sched, &coro->hot_node);
         coco_ctx_switch(&sched->main_ctx, &coro->ctx);
-    }
+    } else {
+        coco_hot_slot_t *slot = hot_slot_acquire(sched, coro);
+        if (!slot) {
+            enqueue_ready(sched, coro);
+            return;
+        }
 
-    /* 禁用抢占定时器（Phase 3）*/
-    coco_preempt_disarm();
+        int slot_idx = (int)(slot - sched->hot_slots);
 
-    /* 切换回调度器后，更新遥测 */
-    size_t current_sp = (size_t)coro->ctx.sp;
-    if (current_sp < coro->stack_high_water_mark) {
-        coro->stack_high_water_mark = current_sp;
+        if (coro->stack_used > 0 && coro->stack_backup) {
+            void *dst = (char *)slot->stack_top - coro->stack_used;
+            memcpy(dst, coro->stack_backup, coro->stack_used);
+            ptrdiff_t delta = (ptrdiff_t)((char *)slot->stack_top - (char *)coro->stack_top);
+            coro->ctx.sp = (char *)coro->ctx.sp + delta;
+            if (coro->ctx.fp) {
+                coro->ctx.fp = (char *)coro->ctx.fp + delta;
+            }
+        } else {
+            coco_ctx_init(&coro->ctx, slot->stack_top, coro_entry_wrapper, coro->arg);
+        }
+
+        coro->hot_slot_idx = slot_idx;
+        slot->occupant = coro;
+        slot->in_use = true;
+        coro->stack_top = slot->stack_top;
+
+        hot_lru_insert_head(sched, &coro->hot_node);
+        sched->hot_coro_count++;
+
+        coco_ctx_switch(&sched->main_ctx, &coro->ctx);
     }
 }
 
