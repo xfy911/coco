@@ -177,13 +177,17 @@ void coco_sched_destroy(coco_sched_t *sched) {
             coco_select_cleanup(coro);
 
             /* 释放栈 */
-            if (coro->stack_base) {
+            if (coro->is_exclusive && coro->stack_base) {
                 if (coro->stack_from_pool && sched->stack_pool) {
                     stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
                 } else {
                     coco_stack_free(coro->stack_top, coro->stack_size);
                 }
                 coro->stack_base = NULL;
+            }
+            if (coro->stack_backup) {
+                free(coro->stack_backup);
+                coro->stack_backup = NULL;
             }
             free(coro);
         }
