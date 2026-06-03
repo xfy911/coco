@@ -26,7 +26,9 @@
 extern _Thread_local coco_sched_t *g_current_sched;
 extern _Thread_local coco_coro_t *g_current_coro;
 
-/* FD 信息表操作 */
+/**
+ * 创建 FD 信息表
+ */
 static coco_fd_info_table_t *fd_info_table_create(uint32_t initial_capacity) {
     coco_fd_info_table_t *ft = calloc(1, sizeof(coco_fd_info_table_t));
     if (!ft) {
@@ -48,6 +50,9 @@ static coco_fd_info_table_t *fd_info_table_create(uint32_t initial_capacity) {
     return ft;
 }
 
+/**
+ * 销毁 FD 信息表
+ */
 static void fd_info_table_destroy(coco_fd_info_table_t *ft) {
     if (!ft) {
         return;
@@ -64,6 +69,9 @@ static void fd_info_table_destroy(coco_fd_info_table_t *ft) {
     free(ft);
 }
 
+/**
+ * 获取指定 FD 的信息
+ */
 static coco_fd_info_t *fd_info_table_get(coco_fd_info_table_t *ft, int fd) {
     if (!ft || fd < 0 || (uint32_t)fd >= ft->capacity) {
         return NULL;
@@ -71,6 +79,9 @@ static coco_fd_info_t *fd_info_table_get(coco_fd_info_table_t *ft, int fd) {
     return ft->table[fd];
 }
 
+/**
+ * 设置指定 FD 的信息
+ */
 static int fd_info_table_set(coco_fd_info_table_t *ft, int fd, coco_fd_info_t *info) {
     if (!ft || fd < 0) {
         return COCO_ERROR;
@@ -101,7 +112,9 @@ static int fd_info_table_set(coco_fd_info_table_t *ft, int fd, coco_fd_info_t *i
     return COCO_OK;
 }
 
-/* Netpoller 线程主循环 */
+/**
+ * Netpoller 线程主循环
+ */
 static void *netpoller_thread(void *arg) {
     coco_netpoller_t *np = (coco_netpoller_t *)arg;
 
