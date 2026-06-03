@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(coco VERSION 2.0.0 LANGUAGES C ASM)
+project(coco VERSION 2.1.0 LANGUAGES C ASM)
 
 # 编译选项
 set(CMAKE_C_STANDARD 11)

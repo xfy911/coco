@@ -4,17 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-04
+
 ### Fixed
 
 - Memory leak when coroutine IDs exceed `coro_table` capacity (dynamic `realloc` expansion)
 - Memory leak in MT worker: dead coroutines not freed after execution
 - Memory leak in `stress_channel_burst` test: channels not destroyed on teardown
 - Memory leak in `coco_sched_destroy`: select state and non-pool stacks not cleaned up
-- io_uring test crash under AddressSanitizer (skipped due to mmap ring buffer incompatibility)
+- io_uring test crash under AddressSanitizer (skipped due to mmap ring buffer incompatibility with ASAN)
 
 ### Added
 
 - `cmake --install` support for headers and static library (GNUInstallDirs)
+- Shared stack support with work-stealing migration hook
+- Stack growth benchmarks and stress tests
 
 ## [2.0.0] - 2026-05-09
 
@@ -174,6 +178,7 @@ All notable changes to this project will be documented in this file.
 - Channel use-after-free and scheduler blocking issue
 - Linux x86-64 assembly implementation
 
-[Unreleased]: https://github.com/xfy/coco/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/xfy/coco/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/xfy/coco/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/xfy/coco/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/xfy/coco/releases/tag/v1.0.0
