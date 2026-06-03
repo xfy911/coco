@@ -116,3 +116,45 @@ void coco_hot_read_sp(void **sp) {
     *sp = NULL;
 #endif
 }
+
+static coco_hot_slot_t *find_free_slot(coco_sched_t *sched, coco_coro_t *coro) {
+    if (coro->priority == COCO_PRIORITY_HIGH) {
+        if (!sched->hot_slots[0].in_use) return &sched->hot_slots[0];
+    }
+    for (int i = 0; i < sched->hot_slot_count; i++) {
+        coco_hot_slot_t *slot = &sched->hot_slots[i];
+        if (slot->reserved) continue;
+        if (!slot->in_use) return slot;
+    }
+    return NULL;
+}
+
+static coco_hot_slot_t *find_eviction_victim_slot(coco_sched_t *sched, coco_coro_t *coro) {
+    coco_hot_node_t *node = sched->hot_lru_tail;
+    while (node) {
+        coco_coro_t *victim = node->coro;
+        if (victim == coro) {
+            node = node->prev;
+            continue;
+        }
+        coco_hot_slot_t *slot = &sched->hot_slots[victim->hot_slot_idx];
+        if (slot->reserved && coro->priority != COCO_PRIORITY_HIGH) {
+            node = node->prev;
+            continue;
+        }
+        return slot;
+    }
+    return NULL;
+}
+
+static void backup_coro_stack(coco_coro_t *coro, coco_hot_slot_t *slot) {
+    if (coro->stack_used == 0) return;
+    void *src = (char *)slot->stack_top - coro->stack_used;
+    if (coro->stack_backup_size < coro->stack_used) {
+        void *new_backup = realloc(coro->stack_backup, coro->stack_used);
+        if (!new_backup) return;
+        coro->stack_backup = new_backup;
+        coro->stack_backup_size = coro->stack_used;
+    }
+    memcpy(coro->stack_backup, src, coro->stack_used);
+}
