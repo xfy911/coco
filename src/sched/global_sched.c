@@ -338,6 +338,42 @@ coco_processor_t *coco_processor_get(uint32_t id) {
 }
 
 /**
+ * 处理协程执行完成后的清理和负载均衡
+ */
+static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
+                              coco_global_sched_t *gs) {
+    extern _Thread_local coco_coro_t *g_current_coro;
+
+    /* 清除当前协程标记 */
+    g_current_coro = NULL;
+    atomic_store(&p->curcoro, NULL);
+
+    /* 处理死亡协程 */
+    if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
+        atomic_fetch_sub(&gs->active_coroutines, 1);
+        if (coro->stack_base && coro->stack_pool) {
+            stack_pool_multi_free((stack_pool_multi_t *)coro->stack_pool,
+                                  coro->stack_top, coro->stack_size);
+            coro->stack_base = NULL;
+        }
+        free(coro);
+    }
+
+    /* 本地队列溢出推入全局队列 */
+    coco_preempt_block_signal();
+    pthread_mutex_lock(&p->local_runq_lock);
+    runq_push_overflow(p);
+    pthread_mutex_unlock(&p->local_runq_lock);
+    coco_preempt_unblock_signal();
+
+    /* 定期负载均衡 */
+    static _Thread_local int balance_counter = 0;
+    if (++balance_counter % 100 == 0) {
+        schedule_balanced(gs);
+    }
+}
+
+/**
  * 工作线程主循环
  */
 static void *worker_loop(void *arg) {
@@ -367,34 +403,7 @@ static void *worker_loop(void *arg) {
             g_current_coro = coro;
             atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);  /* 设置运行状态 */
             coco_ctx_switch(&p->m->ctx, &coro->ctx);
-            g_current_coro = NULL;
-            atomic_store(&p->curcoro, NULL);
-
-            /* Handle coroutine state after switch back */
-            if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
-                atomic_fetch_sub(&gs->active_coroutines, 1);
-                /* Free dead coroutine */
-                if (coro->stack_base && coro->stack_pool) {
-                    stack_pool_multi_free((stack_pool_multi_t *)coro->stack_pool,
-                                          coro->stack_top, coro->stack_size);
-                    coro->stack_base = NULL;
-                }
-                free(coro);
-            }
-
-            /* Load balancing: push overflow from local to global queue
-             * This prevents a single P from becoming a bottleneck */
-            coco_preempt_block_signal();
-            pthread_mutex_lock(&p->local_runq_lock);
-            runq_push_overflow(p);
-            pthread_mutex_unlock(&p->local_runq_lock);
-            coco_preempt_unblock_signal();
-
-            /* Periodic load balancing every 100 coroutines processed */
-            static _Thread_local int balance_counter = 0;
-            if (++balance_counter % 100 == 0) {
-                schedule_balanced(gs);
-            }
+            handle_coro_done(coro, p, gs);
         } else {
             /* Idle wait - 持锁重检查避免丢失唤醒 (H2) */
             coco_preempt_block_signal();
@@ -413,18 +422,7 @@ static void *worker_loop(void *arg) {
                 g_current_coro = coro;
                 atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);  /* 设置运行状态 */
                 coco_ctx_switch(&p->m->ctx, &coro->ctx);
-                g_current_coro = NULL;
-                atomic_store(&p->curcoro, NULL);
-                if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
-                    atomic_fetch_sub(&gs->active_coroutines, 1);
-                    /* Free dead coroutine */
-                    if (coro->stack_base && coro->stack_pool) {
-                        stack_pool_multi_free((stack_pool_multi_t *)coro->stack_pool,
-                                              coro->stack_top, coro->stack_size);
-                        coro->stack_base = NULL;
-                    }
-                    free(coro);
-                }
+                handle_coro_done(coro, p, gs);
                 continue;
             }
             /* 标记为空闲，准备等待 */
