@@ -17,6 +17,7 @@
 extern int coco_preempt_block_signal(void);
 extern int coco_preempt_unblock_signal(void);
 extern void free_stack_mmap(void *stack_top, size_t size);
+extern _Thread_local coco_coro_t *g_current_coro;
 
 /* 全局调度器实例 */
 static coco_global_sched_t *g_global_sched = NULL;
@@ -342,8 +343,6 @@ coco_processor_t *coco_processor_get(uint32_t id) {
  */
 static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
                               coco_global_sched_t *gs) {
-    extern _Thread_local coco_coro_t *g_current_coro;
-
     /* 清除当前协程标记 */
     g_current_coro = NULL;
     atomic_store(&p->curcoro, NULL);
@@ -360,11 +359,13 @@ static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
     }
 
     /* 本地队列溢出推入全局队列 */
-    coco_preempt_block_signal();
+    if (coco_preempt_block_signal() != COCO_OK) {
+        return; /* 信号屏蔽失败，跳过负载均衡 */
+    }
     pthread_mutex_lock(&p->local_runq_lock);
     runq_push_overflow(p);
     pthread_mutex_unlock(&p->local_runq_lock);
-    coco_preempt_unblock_signal();
+    (void) coco_preempt_unblock_signal();
 
     /* 定期负载均衡 */
     static _Thread_local int balance_counter = 0;
@@ -381,7 +382,6 @@ static void *worker_loop(void *arg) {
     coco_global_sched_t *gs = coco_global_get();
 
     /* Thread-local state for worker threads */
-    extern _Thread_local coco_coro_t *g_current_coro;
     extern _Thread_local coco_sched_t *g_current_sched;
 
     /* Set g_current_sched to main_sched for coco_yield/coco_read etc. */

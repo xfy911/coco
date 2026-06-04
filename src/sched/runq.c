@@ -176,7 +176,7 @@ int runq_push_overflow(coco_processor_t *p) {
 
         g->prev = NULL;
         g->next = NULL;
-        p->local_runq_size--;
+        atomic_fetch_sub_explicit(&p->local_runq_size, 1, memory_order_relaxed);
 
         coro_migrate_prepare(from, g);
 

@@ -2,9 +2,11 @@
 build/
 build-asan/
 build_asan/
+build_clean/
 build_coverage/
 build_test/
 build_ts/
+build-tsan/
 cmake-build-*/
 Testing/
 *.o
