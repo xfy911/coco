@@ -43,7 +43,12 @@ typedef struct coco_netpoller {
 
     /* 条件变量 (用于唤醒 poll) */
     pthread_cond_t wake_cond;
-    int wake_fds[2];  /* pipe 用于唤醒 poll */
+#ifdef __APPLE__
+    int wakeup_fd;       /* pipe 写端 (kqueue) */
+    int wakeup_read_fd;  /* pipe 读端 (kqueue) */
+#else
+    int wakeup_fd;       /* eventfd (epoll) */
+#endif
 
     /* 关联的全局调度器 */
     struct coco_global_sched *sched;

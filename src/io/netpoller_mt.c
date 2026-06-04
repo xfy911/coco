@@ -19,6 +19,7 @@
 #define USE_KQUEUE 1
 #else
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #define USE_EPOLL 1
 #endif
 
@@ -141,10 +142,10 @@ static void *netpoller_thread(void *arg) {
             void *udata = events[i].udata;
 
             /* 检查是否是唤醒事件 */
-            if (fd == np->wake_fds[0]) {
+            if (fd == np->wakeup_read_fd) {
                 /* 消费唤醒数据 */
                 char buf[8];
-                while (read(np->wake_fds[0], buf, sizeof(buf)) > 0) {}
+                while (read(np->wakeup_read_fd, buf, sizeof(buf)) > 0) {}
                 atomic_fetch_add(&np->wakeups, 1);
                 continue;
             }
@@ -178,9 +179,9 @@ static void *netpoller_thread(void *arg) {
             uint32_t events_mask = ev->events;
 
             /* 检查是否是唤醒事件 */
-            if (fd == np->wake_fds[0]) {
-                char buf[8];
-                while (read(np->wake_fds[0], buf, sizeof(buf)) > 0) {}
+            if (fd == np->wakeup_fd) {
+                uint64_t val;
+                read(np->wakeup_fd, &val, sizeof(val));
                 atomic_fetch_add(&np->wakeups, 1);
                 continue;
             }
@@ -231,15 +232,26 @@ coco_netpoller_t *coco_netpoller_create(coco_global_sched_t *sched) {
     atomic_store(&np->events_processed, 0);
     atomic_store(&np->wakeups, 0);
 
-    /* 创建唤醒 pipe */
-    if (pipe(np->wake_fds) < 0) {
+    /* 创建唤醒机制 (Linux: eventfd, macOS: pipe) */
+#ifdef USE_KQUEUE
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
         free(np);
         return NULL;
     }
+    np->wakeup_fd = pipefd[1];
+    np->wakeup_read_fd = pipefd[0];
 
     /* 设置非阻塞 */
-    fcntl(np->wake_fds[0], F_SETFL, O_NONBLOCK);
-    fcntl(np->wake_fds[1], F_SETFL, O_NONBLOCK);
+    fcntl(np->wakeup_read_fd, F_SETFL, O_NONBLOCK);
+    fcntl(np->wakeup_fd, F_SETFL, O_NONBLOCK);
+#else
+    np->wakeup_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (np->wakeup_fd < 0) {
+        free(np);
+        return NULL;
+    }
+#endif
 
     /* 创建 poll fd */
 #ifdef USE_KQUEUE
@@ -249,8 +261,10 @@ coco_netpoller_t *coco_netpoller_create(coco_global_sched_t *sched) {
 #endif
 
     if (np->poll_fd < 0) {
-        close(np->wake_fds[0]);
-        close(np->wake_fds[1]);
+#ifdef USE_KQUEUE
+        close(np->wakeup_read_fd);
+#endif
+        close(np->wakeup_fd);
         free(np);
         return NULL;
     }
@@ -258,22 +272,24 @@ coco_netpoller_t *coco_netpoller_create(coco_global_sched_t *sched) {
     /* 注册唤醒 fd */
 #ifdef USE_KQUEUE
     struct kevent kev;
-    EV_SET(&kev, np->wake_fds[0], EVFILT_READ, EV_ADD, 0, 0, NULL);
+    EV_SET(&kev, np->wakeup_read_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
     kevent(np->poll_fd, &kev, 1, NULL, 0, NULL);
 #else
     struct epoll_event ev = {
         .events = EPOLLIN,
-        .data.fd = np->wake_fds[0]
+        .data.fd = np->wakeup_fd
     };
-    epoll_ctl(np->poll_fd, EPOLL_CTL_ADD, np->wake_fds[0], &ev);
+    epoll_ctl(np->poll_fd, EPOLL_CTL_ADD, np->wakeup_fd, &ev);
 #endif
 
     /* 创建 FD 信息表 */
     np->fd_table = fd_info_table_create(1024);
     if (!np->fd_table) {
         close(np->poll_fd);
-        close(np->wake_fds[0]);
-        close(np->wake_fds[1]);
+#ifdef USE_KQUEUE
+        close(np->wakeup_read_fd);
+#endif
+        close(np->wakeup_fd);
         free(np);
         return NULL;
     }
@@ -282,8 +298,10 @@ coco_netpoller_t *coco_netpoller_create(coco_global_sched_t *sched) {
     if (pthread_mutex_init(&np->lock, NULL) != 0) {
         fd_info_table_destroy(np->fd_table);
         close(np->poll_fd);
-        close(np->wake_fds[0]);
-        close(np->wake_fds[1]);
+#ifdef USE_KQUEUE
+        close(np->wakeup_read_fd);
+#endif
+        close(np->wakeup_fd);
         free(np);
         return NULL;
     }
@@ -292,8 +310,10 @@ coco_netpoller_t *coco_netpoller_create(coco_global_sched_t *sched) {
         pthread_mutex_destroy(&np->lock);
         fd_info_table_destroy(np->fd_table);
         close(np->poll_fd);
-        close(np->wake_fds[0]);
-        close(np->wake_fds[1]);
+#ifdef USE_KQUEUE
+        close(np->wakeup_read_fd);
+#endif
+        close(np->wakeup_fd);
         free(np);
         return NULL;
     }
@@ -325,8 +345,10 @@ void coco_netpoller_destroy(coco_netpoller_t *np) {
         close(np->poll_fd);
     }
 
-    close(np->wake_fds[0]);
-    close(np->wake_fds[1]);
+    close(np->wakeup_fd);
+#ifdef USE_KQUEUE
+    close(np->wakeup_read_fd);
+#endif
     free(np);
 }
 
@@ -521,8 +543,13 @@ int coco_netpoller_wakeup(coco_netpoller_t *np) {
     }
 
     /* 写入唤醒数据 */
+#ifdef USE_EPOLL
+    uint64_t val = 1;
+    ssize_t n = write(np->wakeup_fd, &val, sizeof(val));
+#else
     char buf = 1;
-    ssize_t n = write(np->wake_fds[1], &buf, 1);
+    ssize_t n = write(np->wakeup_fd, &buf, 1);
+#endif
     if (n < 0 && errno != EAGAIN) {
         return COCO_ERROR;
     }
