@@ -1,52 +1,69 @@
-<!-- Generated: 2026-04-28 | Updated: 2026-05-06 -->
+# AGENTS.md — coco
 
-# coco
+Stackful coroutine library for C (C11 + platform ASM). Version 2.1.0.
 
-## Purpose
-A production-grade, high-performance, cross-platform C coroutine library. Provides stackful coroutines with cooperative scheduling, Go-style channel communication, async I/O multiplexing, and hierarchical timing wheels. Context switch overhead < 100ns.
+## Build
 
-## Key Files
-| File | Description |
-|------|-------------|
-| `CMakeLists.txt` | Build configuration: C11 + ASM, platform/arch detection, static library, tests, benchmarks, examples |
-| `README.md` | Project overview, API reference, architecture diagram, build/test instructions |
-| `.gitignore` | Git ignore rules |
+```bash
+cmake -B build
+cmake --build build
+```
 
-## Subdirectories
-| Directory | Purpose |
-|-----------|---------|
-| `include/` | Public API header (see `include/AGENTS.md`) |
-| `src/` | Library implementation (see `src/AGENTS.md`) |
-| `examples/` | Usage examples (see `examples/AGENTS.md`) |
-| `tests/` | Unit tests and benchmarks (see `tests/AGENTS.md`) |
-| `docs/` | Documentation (see `docs/AGENTS.md`) |
-| `tools/` | Build tools and utilities (see `tools/coco_stack_pass/AGENTS.md`) |
+Produces `build/libcoco.a` (static library).
 
-## For AI Agents
+### Build options
 
-### Working In This Directory
-- Build with `cmake -B build && cmake --build build`
-- Run tests with `cd build && ctest --output-on-failure`
-- The library is C11 with platform-specific assembly (ASM)
-- Always verify builds after modifying any source file
-- The project uses a single-threaded cooperative model; no thread safety concerns within the scheduler
+| Flag | Purpose |
+|------|---------|
+| `-DCOCO_BUILD_TESTS=OFF` | Skip tests/examples |
+| `-DCOCO_ENABLE_COVERAGE=ON` | Coverage + `make coverage` target |
+| `-DCOCO_ENABLE_ASAN=ON` | AddressSanitizer |
+| `-DCOCO_ENABLE_TSAN=ON` | ThreadSanitizer |
+| `-DCOCO_ENABLE_UBSAN=ON` | UndefinedBehaviorSanitizer |
 
-### Testing Requirements
-- All unit tests must pass before committing
-- Run benchmarks manually to check for performance regressions
-- Context switch benchmark should stay < 100ns
+## Test
 
-### Common Patterns
-- Stackful coroutines with mmap-allocated stacks and guard pages
-- Single-threaded event loop with run queue (doubly-linked list)
-- Platform-specific code isolated in `src/platform/` and `src/io/poll_*.c`
-- Global scheduler/coroutine pointers (`g_current_sched`, `g_current_coro`) for single-threaded access
+```bash
+cmake --build build
+cd build && ctest --output-on-failure
+```
 
-## Dependencies
+Run a single test: `./build/test_<name>`
 
-### External
-- POSIX APIs: mmap/mprotect (stack allocation), sigaltstack (overflow detection), epoll/kqueue (I/O)
-- C11 standard library
-- CMake 3.16+
+Run benchmarks: `./build/bench_<name>` (e.g. `bench_switch`, `bench_channel`, `bench_io`)
 
-<!-- MANUAL: Custom project notes can be added below -->
+Coverage report: `cmake -B build -DCOCO_ENABLE_COVERAGE=ON && cmake --build build && cd build && cmake --build . --target coverage`
+
+## Project layout
+
+| Path | What it is |
+|------|-----------|
+| `include/coco.h` | Public API — all user-facing types and functions |
+| `include/coco_safety.h` | Safety mode config (stack growth) |
+| `src/coco_internal.h` | Core internal structs (`coco_coro_t`, `coco_sched_t`, `coco_ctx_t`) |
+| `src/core/` | Coroutine lifecycle, context init, stack management, cancellation, preemption |
+| `src/sched/` | Scheduler: single-threaded (`sched.c`, `runq.c`) and multi-threaded work-stealing (`global_sched.c`) |
+| `src/channel/` | Channels: single-thread (`channel.c`) and multi-thread (`channel_mt.c`) |
+| `src/io/` | Event loop + poll backends (epoll, kqueue, io_uring) + multi-thread netpoller |
+| `src/timer/` | 4-layer hierarchical timing wheel |
+| `src/platform/` | ASM context switch (`ctx_{arch}.S`), preemption, threading wrappers, ABI detection |
+| `tests/unit/` | 45 unit tests |
+| `tests/benchmark/` | 7 benchmarks |
+| `tools/coco_stack_pass/` | LLVM pass for stack map generation (dynamic stack growth) |
+
+## Architecture notes
+
+- **Two scheduling modes**: single-threaded (`coco_sched_run`) and multi-threaded Go-style P/M work-stealing (`coco_global_sched_start`).
+- **Thread-local state**: `g_current_sched`, `g_current_coro`, `g_return_ctx` — set during context switch, read by `coco_self()` etc.
+- **Context structs are ABI-specific**: `coco_ctx_t` layout differs by arch/OS (see `coco_internal.h`). ASM files must match struct offsets exactly.
+- **ASM files** are in `src/platform/{linux,macos,windows}/ctx_{x86_64,arm64}.S`. Each has its own file due to different ABIs and directives. See `docs/ASM_STYLE_GUIDE.md`.
+- **io_uring** is auto-detected at build; requires `liburing` dev package. Without it, falls back to epoll.
+- **Stack management** has three modes: fixed (default), hot-stack shared (LRU 8×128KB slots), and dynamic growth (SIGSEGV + siglongjmp + stack copy).
+
+## Code conventions
+
+- C11 standard, `-Wall -Wextra -O2`.
+- Comments are in Chinese (中文).
+- No external dependencies beyond libc, liburing (optional), and ws2_32 (Windows).
+- Public API uses `coco_` prefix; internal functions use descriptive names without prefix.
+- ASM files must document `coco_ctx_t` offset layout in header comments (enforced by `ASM_STYLE_GUIDE.md`).
