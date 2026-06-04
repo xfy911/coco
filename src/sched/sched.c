@@ -22,6 +22,9 @@
 #define STEAL_ATTEMPTS_MAX 6
 #define STEAL_BACKOFF_THRESHOLD 3  /* 连续失败次数超过此值则退避 */
 
+extern int coco_preempt_block_signal(void);
+extern int coco_preempt_unblock_signal(void);
+
 /* 线程局部窃取退避计数器 */
 static _Thread_local uint32_t tl_steal_fail_count = 0;
 
@@ -229,7 +232,7 @@ bool schedule_balanced(coco_global_sched_t *sched) {
             } else {
                 p->local_runq_tail = NULL;
             }
-            p->local_runq_size--;
+            atomic_fetch_sub_explicit(&p->local_runq_size, 1, memory_order_relaxed);
 
             /* 从原链表分离并加入临时链表 */
             g->prev = NULL;
@@ -249,9 +252,14 @@ bool schedule_balanced(coco_global_sched_t *sched) {
         return true;
     }
 
+    /* 释放热栈槽位（如果有） */
+    if (sched->main_sched) {
+        for (coco_coro_t *g = to_move_head; g; g = g->next) {
+            coro_migrate_prepare(sched->main_sched, g);
+        }
+    }
+
     /* Phase 2: 批量插入全局队列（不持有任何 local 锁） */
-    extern int coco_preempt_block_signal(void);
-    extern int coco_preempt_unblock_signal(void);
 
     coco_preempt_block_signal();
     pthread_mutex_lock(&sched->global_runq_lock);
