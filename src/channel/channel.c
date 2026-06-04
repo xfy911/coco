@@ -16,6 +16,9 @@
 extern _Thread_local coco_sched_t *g_current_sched;
 extern _Thread_local coco_coro_t *g_current_coro;
 
+extern int coco_preempt_block_signal(void);
+extern int coco_preempt_unblock_signal(void);
+
 /* Channel 结构 */
 struct coco_channel {
     size_t capacity;          /* 缓冲区大小（0 = 无缓冲） */
@@ -140,12 +143,14 @@ void coco_channel_remove_waiter(coco_channel_t *ch, coco_coro_t *coro) {
  * 持锁从等待队列移除协程并减少引用计数。
  */
 void coco_channel_cancel_cleanup(coco_channel_t *ch, coco_coro_t *coro) {
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->wait_queue_lock);
     if (coro->wait_node.in_use && coro->wait_node.channel == ch) {
         coco_channel_remove_waiter(ch, coro);
         coco_channel_unref(ch);
     }
     pthread_mutex_unlock(&ch->wait_queue_lock);
+    coco_preempt_unblock_signal();
 }
 
 /* === Select 协程等待队列操作 === */
@@ -385,9 +390,11 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     }
 
     /* 持锁增加引用计数并入队等待 */
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->wait_queue_lock);
     if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
         pthread_mutex_unlock(&ch->wait_queue_lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
     atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
@@ -395,6 +402,7 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     coro->wait_node.freed_by_destroy = false;
     enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro, ch);
     pthread_mutex_unlock(&ch->wait_queue_lock);
+    coco_preempt_unblock_signal();
 
     coro->state = COCO_STATE_WAITING;
     coco_yield();
@@ -518,9 +526,11 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
     }
 
     /* 持锁增加引用计数并入队等待 */
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->wait_queue_lock);
     if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
         pthread_mutex_unlock(&ch->wait_queue_lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
     atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
@@ -528,6 +538,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
     coro->wait_node.freed_by_destroy = false;
     enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro, ch);
     pthread_mutex_unlock(&ch->wait_queue_lock);
+    coco_preempt_unblock_signal();
 
     coro->state = COCO_STATE_WAITING;
     coco_yield();
@@ -877,6 +888,7 @@ void coco_channel_destroy(coco_channel_t *ch) {
     coco_sched_t *sched = g_current_sched;
 
     /* 持锁排空等待队列 */
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->wait_queue_lock);
 
     /* 清理普通等待队列，设置 freed_by_destroy 标志并唤醒 */
@@ -934,6 +946,7 @@ void coco_channel_destroy(coco_channel_t *ch) {
     }
 
     pthread_mutex_unlock(&ch->wait_queue_lock);
+    coco_preempt_unblock_signal();
 
     /* 通过 unref 释放，等待者恢复后会调用 unref 减少引用计数 */
     coco_channel_unref(ch);
