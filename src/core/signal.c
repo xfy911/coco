@@ -111,7 +111,7 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     /* 检查协程是否可动态增长 */
     if (!coro->stack_growable) {
         /* 固定栈协程无法增长，标记溢出状态 */
-        coro->state = COCO_STATE_OVERFLOW;
+        atomic_store_explicit(&coro->state, COCO_STATE_OVERFLOW, memory_order_release);
         if (coro->error_cb) {
             coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack overflow on fixed-stack coroutine");
         }
@@ -122,7 +122,7 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     size_t new_size = coco_calc_new_stack_size(coro->current_stack_size);
     if (new_size == 0 || new_size > coro->max_stack_size) {
         /* 超过最大限制，无法增长 */
-        coro->state = COCO_STATE_OVERFLOW;
+        atomic_store_explicit(&coro->state, COCO_STATE_OVERFLOW, memory_order_release);
         if (coro->error_cb) {
             coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack growth limit reached");
         }
@@ -142,7 +142,7 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
 
     if (grow_info.result != COCO_GROW_OK) {
         /* 增长失败 */
-        coro->state = COCO_STATE_OVERFLOW;
+        atomic_store_explicit(&coro->state, COCO_STATE_OVERFLOW, memory_order_release);
         if (coro->error_cb) {
             coro->error_cb(coro, COCO_ERROR_STACK_OVERFLOW, "Stack growth failed");
         }
@@ -161,7 +161,7 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     coro->ctx.stack_limit = (void*)grow_info.new_limit;
 
     /* 使用 OVERFLOW_RESUME 状态标记已恢复，handle_coro_return 会处理入队 */
-    coro->state = COCO_STATE_OVERFLOW_RESUME;
+    atomic_store_explicit(&coro->state, COCO_STATE_OVERFLOW_RESUME, memory_order_release);
 
     /* 恢复到调度器主循环 */
     siglongjmp(g_overflow_jmp, 1);

@@ -60,7 +60,7 @@ void coco_preempt_handler(int sig, siginfo_t *info, void *context) {
 
     /* 获取当前协程 */
     coco_coro_t *coro = g_current_coro;
-    if (!coro || coro->state != COCO_STATE_RUNNING) {
+    if (!coro || atomic_load_explicit(&coro->state, memory_order_acquire) != COCO_STATE_RUNNING) {
         g_preempt_state.in_handler = 0;
         return;
     }

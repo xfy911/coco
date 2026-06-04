@@ -131,7 +131,7 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
         coro->entry = entry;
         coro->arg = arg;
         coro->id = atomic_fetch_add(&gs->next_coro_id, 1);
-        coro->state = COCO_STATE_READY;
+        atomic_store_explicit(&coro->state, COCO_STATE_READY, memory_order_release);
         coro->priority = (coco_priority_t)priority;
         coro->wait_fd = -1;
         coro->hot_slot_idx = -1;

@@ -203,7 +203,7 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
         return COCO_ERROR;
     }
     coro->wait_fd = fd;
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     return COCO_OK;
 }
@@ -247,7 +247,7 @@ int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
         int fd = events[i].data.fd;
         coco_coro_t *coro = fd_table_get(sched->fd_table, fd);
 
-        if (coro && coro->state == COCO_STATE_WAITING) {
+        if (coro && atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_WAITING) {
             enqueue_ready(sched, coro);
             fd_table_clear(sched->fd_table, fd);
             coro->wait_fd = -1;

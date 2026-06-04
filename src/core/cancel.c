@@ -24,7 +24,8 @@ int coco_cancel(coco_coro_t *coro) {
     }
 
     /* 死协程或已溢出协程无法取消 */
-    if (coro->state == COCO_STATE_DEAD || coro->state == COCO_STATE_OVERFLOW) {
+    coco_state_t st = atomic_load_explicit(&coro->state, memory_order_acquire);
+    if (st == COCO_STATE_DEAD || st == COCO_STATE_OVERFLOW) {
         return COCO_ERROR;
     }
 
@@ -32,7 +33,8 @@ int coco_cancel(coco_coro_t *coro) {
 
     /* 如果协程在等待状态，唤醒它 */
     coco_sched_t *sched = g_current_sched;
-    if (coro->state == COCO_STATE_WAITING && sched) {
+    st = atomic_load_explicit(&coro->state, memory_order_acquire);
+    if (st == COCO_STATE_WAITING && sched) {
         /* 清除 wait_fd */
         if (coro->wait_fd >= 0) {
             coco_poll_unregister(sched, coro->wait_fd);

@@ -229,7 +229,7 @@ int coco_global_runq_put(struct coco_coro *g) {
         return COCO_ERROR;
     }
 
-    g->state = COCO_STATE_READY;  /* 设置就绪状态 */
+    atomic_store_explicit(&g->state, COCO_STATE_READY, memory_order_release);  /* 设置就绪状态 */
 
     coco_preempt_block_signal();
     pthread_mutex_lock(&g_global_sched->global_runq_lock);
@@ -364,13 +364,13 @@ static void *worker_loop(void *arg) {
         if (coro) {
             atomic_store(&p->curcoro, coro);
             g_current_coro = coro;
-            coro->state = COCO_STATE_RUNNING;  /* 设置运行状态 */
+            atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);  /* 设置运行状态 */
             coco_ctx_switch(&p->m->ctx, &coro->ctx);
             g_current_coro = NULL;
             atomic_store(&p->curcoro, NULL);
 
             /* Handle coroutine state after switch back */
-            if (coro->state == COCO_STATE_DEAD) {
+            if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
                 atomic_fetch_sub(&gs->active_coroutines, 1);
                 /* Free dead coroutine */
                 if (coro->stack_base && p->stack_pool) {
@@ -410,11 +410,11 @@ static void *worker_loop(void *arg) {
                 coco_preempt_unblock_signal();
                 atomic_store(&p->curcoro, coro);
                 g_current_coro = coro;
-                coro->state = COCO_STATE_RUNNING;  /* 设置运行状态 */
+                atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);  /* 设置运行状态 */
                 coco_ctx_switch(&p->m->ctx, &coro->ctx);
                 g_current_coro = NULL;
                 atomic_store(&p->curcoro, NULL);
-                if (coro->state == COCO_STATE_DEAD) {
+                if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
                     atomic_fetch_sub(&gs->active_coroutines, 1);
                     /* Free dead coroutine */
                     if (coro->stack_base && p->stack_pool) {

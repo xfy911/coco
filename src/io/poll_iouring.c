@@ -259,7 +259,7 @@ int coco_poll_register_iouring(coco_sched_t *sched, int fd, coco_coro_t *coro, s
     }
 
     coro->wait_fd = fd;
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     return COCO_OK;
 }
@@ -326,7 +326,7 @@ int coco_poll_wait_iouring(coco_sched_t *sched, int timeout_ms) {
             switch (req->type) {
                 case IOURING_REQ_POLL:
                     /* 轮询完成，唤醒协程 */
-                    if (coro->state == COCO_STATE_WAITING) {
+                    if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_WAITING) {
                         enqueue_ready(sched, coro);
                         fd_table_clear(sched->fd_table, req->fd);
                         coro->wait_fd = -1;
@@ -337,7 +337,7 @@ int coco_poll_wait_iouring(coco_sched_t *sched, int timeout_ms) {
                 case IOURING_REQ_WRITE:
                     /* 文件 I/O 完成 */
                     req->result = cqe->res;
-                    if (coro->state == COCO_STATE_WAITING) {
+                    if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_WAITING) {
                         enqueue_ready(sched, coro);
                     }
                     break;
@@ -425,7 +425,7 @@ int coco_file_open(const char *path, int flags, mode_t mode) {
     io_uring_prep_openat(sqe, AT_FDCWD, path, flags, mode);
     io_uring_sqe_set_data(sqe, req);
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     /* 提交并等待 */
     io_uring_submit(&iou->ring);
@@ -473,7 +473,7 @@ ssize_t coco_file_read(int fd, void *buf, size_t count) {
     io_uring_prep_read(sqe, fd, buf, count, 0);
     io_uring_sqe_set_data(sqe, req);
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     /* 提交并等待 */
     io_uring_submit(&iou->ring);
@@ -521,7 +521,7 @@ ssize_t coco_file_write(int fd, const void *buf, size_t count) {
     io_uring_prep_write(sqe, fd, buf, count, 0);
     io_uring_sqe_set_data(sqe, req);
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     /* 提交并等待 */
     io_uring_submit(&iou->ring);
@@ -567,7 +567,7 @@ int coco_file_close(int fd) {
     io_uring_prep_close(sqe, fd);
     io_uring_sqe_set_data(sqe, req);
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     /* 提交并等待 */
     io_uring_submit(&iou->ring);
@@ -742,7 +742,7 @@ int coco_batch_submit_iouring(coco_batch_io_t *batch, coco_batch_result_t *resul
     }
 
     /* 设置协程为等待状态 */
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
     /* 提交所有 SQE */
     int submitted = io_uring_submit(&iou->ring);
@@ -797,7 +797,7 @@ int coco_batch_submit_iouring(coco_batch_io_t *batch, coco_batch_result_t *resul
     }
 
     /* 唤醒协程 */
-    coro->state = COCO_STATE_READY;
+    atomic_store_explicit(&coro->state, COCO_STATE_READY, memory_order_release);
 
     return (int)completed;
 }

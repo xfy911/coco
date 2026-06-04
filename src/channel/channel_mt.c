@@ -140,7 +140,7 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
 
     coro->wait_node.value = value;
     enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro, ch);
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     pthread_mutex_unlock(&ch->lock);
 
     coco_yield();
@@ -215,7 +215,7 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
 
     coro->wait_node.value = NULL;
     enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro, ch);
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     pthread_mutex_unlock(&ch->lock);
 
     coco_yield();

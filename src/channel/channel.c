@@ -402,7 +402,7 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     pthread_mutex_unlock(&ch->wait_queue_lock);
     coco_preempt_unblock_signal();
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     coco_yield();
 
     /* 减少引用计数 */
@@ -536,7 +536,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
     pthread_mutex_unlock(&ch->wait_queue_lock);
     coco_preempt_unblock_signal();
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     coco_yield();
 
     /* 减少引用计数 */
@@ -831,7 +831,7 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
         }
     }
 
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     coco_yield();
 
     /* Phase 4: Resume — check what woke us */

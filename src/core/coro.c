@@ -82,7 +82,7 @@ static uint64_t get_timestamp_ms(void) {
 void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
     coco_priority_t prio = coro->priority;
 
-    coro->state = COCO_STATE_READY;
+    atomic_store_explicit(&coro->state, COCO_STATE_READY, memory_order_release);
     coro->prev = sched->ready_tails[prio];
     coro->next = NULL;
     coro->ready_timestamp = get_timestamp_ms();
@@ -356,7 +356,7 @@ static coco_coro_t *dequeue_ready(coco_sched_t *sched) {
 static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     g_current_coro = coro;
     sched->current = coro;
-    coro->state = COCO_STATE_RUNNING;
+    atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);
 
     sched->sched_tick++;
     coro->last_run_tick = sched->sched_tick;
@@ -444,7 +444,7 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
 /* 处理协程返回 */
 static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
     /* 检查时间片到期（Phase 2）*/
-    if (sched->fairness_enabled && coro->state == COCO_STATE_RUNNING) {
+    if (sched->fairness_enabled && atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_RUNNING) {
         uint64_t now = coco_get_time_fast();
         if (now - coro->runtime_start_ns >= sched->time_slice_ns) {
             coro->time_slice_expired = true;
@@ -454,7 +454,7 @@ static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
         }
     }
 
-    switch (coro->state) {
+    switch (atomic_load_explicit(&coro->state, memory_order_acquire)) {
         case COCO_STATE_CREATED:
             /* 协程刚创建，不应该在此出现 */
             break;
@@ -622,7 +622,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     }
 
     coro->id = sched->next_id++;
-    coro->state = COCO_STATE_CREATED;
+    atomic_store_explicit(&coro->state, COCO_STATE_CREATED, memory_order_release);
     coro->entry = entry;
     coro->arg = arg;
     coro->wait_fd = -1;
@@ -686,7 +686,7 @@ void coco_exit(coco_coro_t *coro, void *result) {
         return;
     }
 
-    coro->state = COCO_STATE_DEAD;
+    atomic_store_explicit(&coro->state, COCO_STATE_DEAD, memory_order_release);
     coro->result = result;
 
     coco_sched_t *sched = g_current_sched;
@@ -721,7 +721,7 @@ int coco_yield(void) {
         hot_lru_move_to_head(sched, &coro->hot_node);
     }
 
-    if (coro->state == COCO_STATE_RUNNING) {
+    if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_RUNNING) {
         /* 检查是否在多线程模式下 */
         extern coco_global_sched_t *coco_global_get(void);
         coco_global_sched_t *gs = coco_global_get();
@@ -750,7 +750,7 @@ void *coco_join(coco_coro_t *coro) {
     }
 
     /* 等待协程结束 */
-    while (coro->state != COCO_STATE_DEAD) {
+    while (atomic_load_explicit(&coro->state, memory_order_acquire) != COCO_STATE_DEAD) {
         coco_yield();
     }
 
@@ -791,7 +791,7 @@ coco_state_t coco_get_state(coco_coro_t *coro) {
     if (!coro) {
         return COCO_STATE_DEAD;
     }
-    return coro->state;
+    return atomic_load_explicit(&coro->state, memory_order_acquire);
 }
 
 uint64_t coco_get_id(coco_coro_t *coro) {
@@ -829,7 +829,7 @@ void coco_set_priority(coco_coro_t *coro, coco_priority_t priority) {
     coro->priority = priority;
 
     /* 如果协程在就绪队列中，需要重新排队 */
-    if (coro->state == COCO_STATE_READY && g_current_sched) {
+    if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_READY && g_current_sched) {
         coco_sched_t *sched = g_current_sched;
 
         /* 从旧优先级队列中移除 */

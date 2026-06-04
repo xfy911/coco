@@ -9,6 +9,7 @@
 #include "../include/coco_safety.h"
 #include <stdint.h>
 #include <stddef.h>
+#include <stdatomic.h>
 
 /* 上下文结构 (与汇编对应，支持 x86-64 和 ARM64) */
 /* ARM64 上下文结构 - 包含浮点寄存器 */
@@ -111,7 +112,7 @@ typedef struct coco_select_node {
 /* 协程结构 */
 struct coco_coro {
     uint64_t id;
-    coco_state_t state;
+    _Atomic coco_state_t state;
     coco_ctx_t ctx;
 
     void *stack_base;      /* 栈起始地址 */

@@ -376,7 +376,7 @@ static void process_w1_range(coco_timer_wheel_t *tw, coco_sched_t *sched,
 
             if (timer->coro) {
                 enqueue_ready(sched, timer->coro);
-                timer->coro->state = COCO_STATE_READY;
+                atomic_store_explicit(&timer->coro->state, COCO_STATE_READY, memory_order_release);
                 timer->coro->wake_time = 0;
             } else if (timer->callback) {
                 timer->callback(timer->arg);

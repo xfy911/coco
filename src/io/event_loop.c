@@ -76,7 +76,7 @@ int coco_read(int fd, void *buf, size_t count) {
                 /* 注册读事件并等待 */
                 if (np) {
                     /* 多线程模式：使用 netpoller */
-                    coro->state = COCO_STATE_WAITING;  /* 设置等待状态，避免 yield 时重新入队 */
+                    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);  /* 设置等待状态，避免 yield 时重新入队 */
                     coco_netpoller_register(np, fd, 0x01, coro, 0);
                     coco_yield();
                     coco_netpoller_unregister(np, fd, 0x01);
@@ -130,7 +130,7 @@ int coco_write(int fd, const void *buf, size_t count) {
                 /* 注册写事件并等待 */
                 if (np) {
                     /* 多线程模式：使用 netpoller */
-                    coro->state = COCO_STATE_WAITING;  /* 设置等待状态，避免 yield 时重新入队 */
+                    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);  /* 设置等待状态，避免 yield 时重新入队 */
                     coco_netpoller_register(np, fd, 0x02, coro, 0);
                     coco_yield();
                     coco_netpoller_unregister(np, fd, 0x02);
@@ -258,7 +258,7 @@ int coco_sleep(uint64_t ms) {
     coco_timer_add(sched->timer_wheel, ms, coro);
 
     /* 设置为等待状态并 yield */
-    coro->state = COCO_STATE_WAITING;
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     coco_yield();
 
     return COCO_OK;
