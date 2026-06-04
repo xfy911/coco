@@ -1,5 +1,5 @@
 PROJECT_NAME = "coco"
-PROJECT_NUMBER = "2.1.0"
+PROJECT_NUMBER = "2.2.0"
 OUTPUT_DIRECTORY = docs/api
 INPUT = include/coco.h include/coco_safety.h
 FILE_PATTERNS = *.h

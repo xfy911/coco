@@ -4,21 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-04
+
+### Added
+- Runtime version query API: `coco_version()`, `coco_version_major()`, `coco_version_minor()`, `coco_version_patch()`.
+- `ENSURE_IN_CORO` / `ENSURE_IN_CORO_RET` / `ENSURE_IN_CORO_VOID` guard macros for coroutine-only APIs, preventing crashes when called outside a coroutine context.
+- POSIX signal block/unblock (`coco_preempt_block_signal()` / `coco_preempt_unblock_signal()`) with reference-counted nesting counter for critical section protection.
+- P binding detection for `coco_go()`: when called from a worker thread, the new coroutine binds to the current P instead of scanning all processors.
+- Periodic load balancing integrated into the worker loop (triggered every 100 coroutines processed).
+- Linux netpoller wakeup uses `eventfd` instead of pipe for lower overhead.
+- New examples: `hot_stack`, `dynamic_stack`, `context_api`.
+- New benchmarks: `bench_mt_sched`, `bench_hot_cold_switch`; `bench_io` rewritten to measure actual coroutine I/O throughput.
+- New tests: `stress_mt_scaling`, `stress_channel_mt_burst`, `test_ctx_x86_64`, `test_preempt_block`, `test_preempt_channel`, `test_preempt_sched`, `test_coro_guard`, `test_sched_reinit`, `test_sched_balanced`.
+- Doxygen configuration for API reference generation.
+- GitHub Actions CI workflow with sanitizer matrix (ASan, UBSan).
+- Automated release workflow triggered on version tag push.
+
 ### Changed
-- `coco_yield()` return type changed from `void` to `int` to support `ENSURE_IN_CORO` guard.
-  **ABI note:** Existing compiled objects must be recompiled against the new header.
-- `coro->state` type changed from `int` (non-atomic) to `_Atomic int` for thread-safety.
-  **ABI note:** Existing compiled objects must be recompiled.
+- `coco_yield()` return type changed from `void` to `int` (returns `COCO_ERROR_INVALID` when called outside a coroutine). **ABI note:** existing compiled objects must be recompiled.
+- `coro->state` type changed from `int` (non-atomic) to `_Atomic int` for thread-safety. **ABI note:** existing compiled objects must be recompiled.
+- Global runq wake strategy: targeted `pthread_cond_signal` replaces broadcast to fix thundering herd.
 
 ### Fixed
 - Multi-threaded scheduler data races and leaks:
-  - `coro->state` is now `_Atomic` (acquire/release ordering)
-  - `stack_pool_multi` protected by per-pool mutex
-  - Wrong-pool-free on work-stealing fixed via `coro->stack_pool` tracking
-- Scheduler reinitialization: `coco_global_sched_stop()` now fully cleans up state
-- `schedule_balanced()` now actually redistributes coroutines from overloaded P's
-- `schedule_balanced()` releases hot-stack slots before migration
-- Worker thread H2 path now performs load balancing (was skipping `runq_push_overflow` and `schedule_balanced`)
+  - `coro->state` is now `_Atomic` (acquire/release ordering).
+  - `stack_pool_multi` protected by per-pool mutex.
+  - Wrong-pool-free on work-stealing fixed via `coro->stack_pool` tracking.
+- Channel `wait_queue_lock` and scheduler `global_runq_lock` / `local_runq_lock` critical sections protected from preemption.
+- Scheduler reinitialization: `coco_global_sched_stop()` now fully cleans up state (queues, counters, locks).
+- `schedule_balanced()` now actually redistributes coroutines from overloaded P's and releases hot-stack slots before migration.
+- Worker thread H2 path now performs load balancing (extracted shared `handle_coro_done` helper).
+- Windows APC preemption delivery: added alertable `SleepEx` in idle paths.
+- Windows worker idle sleep capped to 1ms to prevent lost `pthread_cond_signal` wakeups.
+- Windows I/O function linker conflicts between POSIX and Winsock implementations resolved.
+- UBSan null-pointer in `stress_channel_burst`: hot-stack backup/restore now rewrites stack pointers in callee-saved registers.
+- GCC 16 rbp clobber in sanitizer builds (`-fomit-frame-pointer` for register integrity test).
+- Signal blocking nesting counter underflow guard in `coco_preempt_unblock_signal()`.
+- Munmap fallback in `coco_global_sched_stop()` queue cleanup when `coro->stack_pool` is NULL.
 
 ## [2.1.0] - 2026-06-04
 
@@ -194,7 +216,8 @@ All notable changes to this project will be documented in this file.
 - Channel use-after-free and scheduler blocking issue
 - Linux x86-64 assembly implementation
 
-[Unreleased]: https://github.com/xfy/coco/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/xfy/coco/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/xfy/coco/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/xfy/coco/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/xfy/coco/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/xfy/coco/releases/tag/v1.0.0

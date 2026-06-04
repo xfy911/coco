@@ -1,6 +1,6 @@
 # AGENTS.md — coco
 
-Stackful coroutine library for C (C11 + platform ASM). Version 2.1.0.
+Stackful coroutine library for C (C11 + platform ASM). Version 2.2.0.
 
 ## Build
 
