@@ -16,6 +16,7 @@
 
 extern int coco_preempt_block_signal(void);
 extern int coco_preempt_unblock_signal(void);
+extern void free_stack_mmap(void *stack_top, size_t size);
 
 /* 全局调度器实例 */
 static coco_global_sched_t *g_global_sched = NULL;
@@ -645,6 +646,7 @@ int coco_global_sched_stop(void) {
                 stack_pool_multi_free((stack_pool_multi_t *)g->stack_pool, g->stack_top, g->stack_size);
             } else {
                 /* fallback to munmap */
+                free_stack_mmap(g->stack_top, g->stack_size);
             }
         }
         free(g);
@@ -664,8 +666,13 @@ int coco_global_sched_stop(void) {
         coco_coro_t *g = p->local_runq_head;
         while (g) {
             coco_coro_t *next = g->next;
-            if (g->stack_base && g->stack_pool) {
-                stack_pool_multi_free((stack_pool_multi_t *)g->stack_pool, g->stack_top, g->stack_size);
+            if (g->stack_base) {
+                if (g->stack_pool) {
+                    stack_pool_multi_free((stack_pool_multi_t *)g->stack_pool, g->stack_top, g->stack_size);
+                } else {
+                    /* fallback to munmap */
+                    free_stack_mmap(g->stack_top, g->stack_size);
+                }
             }
             free(g);
             g = next;

@@ -257,6 +257,9 @@ int coco_preempt_block_signal(void) {
  * @return COCO_OK 成功，COCO_ERROR 失败
  */
 int coco_preempt_unblock_signal(void) {
+    if (g_preempt_block_nest <= 0) {
+        return COCO_ERROR;
+    }
     if (--g_preempt_block_nest == 0) {
         sigset_t set = preempt_sigset();
         if (pthread_sigmask(SIG_UNBLOCK, &set, NULL) != 0) {
