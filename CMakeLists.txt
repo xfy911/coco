@@ -286,6 +286,8 @@ if(COCO_BUILD_TESTS)
         bench_preempt
         bench_stack
         bench_hot_stack
+        bench_mt_sched
+        bench_hot_cold_switch
     )
 
     foreach(bench_name ${BENCH_TESTS})
