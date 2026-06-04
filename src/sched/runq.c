@@ -14,6 +14,9 @@
 #include "../core/hot_stack.h"
 #include <string.h>
 
+extern int coco_preempt_block_signal(void);
+extern int coco_preempt_unblock_signal(void);
+
 /**
  * 本地运行队列入队
  */
@@ -22,11 +25,13 @@ int runq_put(coco_processor_t *p, coco_coro_t *g) {
         return -1;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&p->local_runq_lock);
 
     /* 检查是否溢出 */
     if (atomic_load(&p->local_runq_size) >= LOCAL_RUNQ_MAX) {
         pthread_mutex_unlock(&p->local_runq_lock);
+        coco_preempt_unblock_signal();
         /* 溢出到全局队列 (先释放 local 锁，避免锁嵌套) */
         return runq_put_global(g);
     }
@@ -44,6 +49,7 @@ int runq_put(coco_processor_t *p, coco_coro_t *g) {
     atomic_fetch_add(&p->local_runq_size, 1);
 
     pthread_mutex_unlock(&p->local_runq_lock);
+    coco_preempt_unblock_signal();
     return 0;
 }
 
@@ -55,10 +61,12 @@ coco_coro_t *runq_get(coco_processor_t *p) {
         return NULL;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&p->local_runq_lock);
 
     if (!p->local_runq_head) {
         pthread_mutex_unlock(&p->local_runq_lock);
+        coco_preempt_unblock_signal();
         return NULL;
     }
 
@@ -76,6 +84,7 @@ coco_coro_t *runq_get(coco_processor_t *p) {
     atomic_fetch_sub(&p->local_runq_size, 1);
 
     pthread_mutex_unlock(&p->local_runq_lock);
+    coco_preempt_unblock_signal();
     return g;
 }
 
@@ -88,12 +97,15 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
     }
 
     /* 使用 trylock 减少阻塞 */
+    coco_preempt_block_signal();
     if (pthread_mutex_trylock(&target->local_runq_lock) != 0) {
+        coco_preempt_unblock_signal();
         return NULL;  /* 锁竞争，跳过这个 P */
     }
 
     if (atomic_load(&target->local_runq_size) == 0) {
         pthread_mutex_unlock(&target->local_runq_lock);
+        coco_preempt_unblock_signal();
         return NULL;
     }
 
@@ -125,6 +137,7 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
     }
 
     pthread_mutex_unlock(&target->local_runq_lock);
+    coco_preempt_unblock_signal();
 
     return batch;
 }

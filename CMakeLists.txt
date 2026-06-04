@@ -233,6 +233,7 @@ if(COCO_BUILD_TESTS)
         test_preempt_block
         test_fairness
         test_preempt_channel
+        test_preempt_sched
         test_long_running
         test_safety
         test_stack_map

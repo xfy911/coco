@@ -131,6 +131,7 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
         coro->state = COCO_STATE_READY;
         coro->priority = (coco_priority_t)priority;
         coro->wait_fd = -1;
+        coro->hot_slot_idx = -1;
         coro->safety_mode = g_safety_mode;
 
         /* Initialize context (uses coro_entry_wrapper like coco_create) */

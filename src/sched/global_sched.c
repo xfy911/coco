@@ -14,6 +14,9 @@
 #include <string.h>
 #include <unistd.h>
 
+extern int coco_preempt_block_signal(void);
+extern int coco_preempt_unblock_signal(void);
+
 /* 全局调度器实例 */
 static coco_global_sched_t *g_global_sched = NULL;
 
@@ -224,6 +227,7 @@ int coco_global_runq_put(struct coco_coro *g) {
 
     g->state = COCO_STATE_READY;  /* 设置就绪状态 */
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&g_global_sched->global_runq_lock);
 
     g->next = NULL;
@@ -238,6 +242,7 @@ int coco_global_runq_put(struct coco_coro *g) {
     g_global_sched->global_runq_size++;
 
     pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+    coco_preempt_unblock_signal();
 
     /* 按需唤醒空闲线程: 根据全局队列长度和可用 P 决定唤醒数量
      * 避免 thundering herd: 只唤醒最少数量的空闲线程 */
@@ -247,11 +252,13 @@ int coco_global_runq_put(struct coco_coro *g) {
         to_wake = g_global_sched->processor_count;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&g_global_sched->idle_lock);
     for (int i = 0; i < to_wake; i++) {
         pthread_cond_signal(&g_global_sched->idle_cond);
     }
     pthread_mutex_unlock(&g_global_sched->idle_lock);
+    coco_preempt_unblock_signal();
 
     return 0;
 }
@@ -264,10 +271,12 @@ struct coco_coro *coco_global_runq_get(void) {
         return NULL;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&g_global_sched->global_runq_lock);
 
     if (!g_global_sched->global_runq_head) {
         pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+        coco_preempt_unblock_signal();
         return NULL;
     }
 
@@ -285,6 +294,7 @@ struct coco_coro *coco_global_runq_get(void) {
     g_global_sched->global_runq_size--;
 
     pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+    coco_preempt_unblock_signal();
     return g;
 }
 
@@ -296,9 +306,11 @@ uint64_t coco_global_runq_size(void) {
         return 0;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&g_global_sched->global_runq_lock);
     uint64_t size = g_global_sched->global_runq_size;
     pthread_mutex_unlock(&g_global_sched->global_runq_lock);
+    coco_preempt_unblock_signal();
 
     return size;
 }
@@ -364,20 +376,25 @@ static void *worker_loop(void *arg) {
 
             /* Load balancing: push overflow from local to global queue
              * This prevents a single P from becoming a bottleneck */
+            coco_preempt_block_signal();
             pthread_mutex_lock(&p->local_runq_lock);
             runq_push_overflow(p);
             pthread_mutex_unlock(&p->local_runq_lock);
+            coco_preempt_unblock_signal();
         } else {
             /* Idle wait - 持锁重检查避免丢失唤醒 (H2) */
+            coco_preempt_block_signal();
             pthread_mutex_lock(&gs->idle_lock);
             if (!atomic_load(&gs->running)) {
                 pthread_mutex_unlock(&gs->idle_lock);
+                coco_preempt_unblock_signal();
                 break;
             }
             /* H2 fix: 持锁重检查 find_runnable，避免唤醒信号丢失 */
             coro = find_runnable(p);
             if (coro) {
                 pthread_mutex_unlock(&gs->idle_lock);
+                coco_preempt_unblock_signal();
                 atomic_store(&p->curcoro, coro);
                 g_current_coro = coro;
                 coro->state = COCO_STATE_RUNNING;  /* 设置运行状态 */
@@ -410,6 +427,7 @@ static void *worker_loop(void *arg) {
                 pthread_cond_wait(&gs->idle_cond, &gs->idle_lock);
             }
             pthread_mutex_unlock(&gs->idle_lock);
+            coco_preempt_unblock_signal();
         }
     }
     return NULL;
@@ -484,9 +502,11 @@ int coco_global_sched_start(uint32_t num_workers) {
     if (coco_netpoller_start(gs->netpoller) != COCO_OK) {
         /* 工作线程已启动，需要停止它们 */
         atomic_store(&gs->running, false);
+        coco_preempt_block_signal();
         pthread_mutex_lock(&gs->idle_lock);
         pthread_cond_broadcast(&gs->idle_cond);
         pthread_mutex_unlock(&gs->idle_lock);
+        coco_preempt_unblock_signal();
         for (uint32_t i = 0; i < gs->processor_count; i++) {
             coco_processor_t *p = gs->processors[i];
             if (p && p->m && p->m->thread) {
@@ -529,9 +549,11 @@ int coco_global_sched_stop(void) {
     atomic_store(&gs->running, false);
 
     /* Wake up all idle workers */
+    coco_preempt_block_signal();
     pthread_mutex_lock(&gs->idle_lock);
     pthread_cond_broadcast(&gs->idle_cond);
     pthread_mutex_unlock(&gs->idle_lock);
+    coco_preempt_unblock_signal();
 
     /* Wait for worker threads to finish */
     for (uint32_t i = 0; i < gs->processor_count; i++) {
