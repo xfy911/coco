@@ -633,11 +633,10 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
         return COCO_ERROR_INVALID;
     }
 
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
+
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
 
     /* Phase 1: Non-blocking check — scan for immediately ready operations */
     for (int i = 0; i < ncases; i++) {

@@ -302,6 +302,10 @@ extern _Thread_local coco_ctx_t *g_return_ctx;
     if (!g_current_coro) return (retval); \
 } while(0)
 
+#define ENSURE_IN_CORO_VOID() do { \
+    if (!g_current_coro) return; \
+} while(0)
+
 #define ENSURE_IN_CORO() ENSURE_IN_CORO_RET(COCO_ERROR_INVALID)
 
 /* 上下文初始化 (C 实现) */

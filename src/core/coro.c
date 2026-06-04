@@ -627,6 +627,8 @@ int coco_validate_stack_map(coco_sched_t *sched) {
 }
 
 void coco_exit(coco_coro_t *coro, void *result) {
+    ENSURE_IN_CORO_VOID();
+
     if (!coro) {
         return;
     }
@@ -693,6 +695,8 @@ int coco_yield(void) {
 }
 
 void *coco_join(coco_coro_t *coro) {
+    ENSURE_IN_CORO_RET(NULL);
+
     if (!coro) {
         return NULL;
     }

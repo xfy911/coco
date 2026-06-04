@@ -278,9 +278,7 @@ int coco_read(int fd, void *buf, size_t count) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 确保 socket 为非阻塞模式 */
     if (fd < 32 && (coro->nonblock_fds_set & (1U << fd))) {
@@ -328,9 +326,7 @@ int coco_write(int fd, const void *buf, size_t count) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 确保 socket 为非阻塞模式 */
     if (fd < 32 && (coro->nonblock_fds_set & (1U << fd))) {
@@ -385,9 +381,7 @@ int coco_accept(int fd, void *addr, size_t *addrlen) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 确保 socket 为非阻塞模式 */
     if (fd < 32 && (coro->nonblock_fds_set & (1U << fd))) {
@@ -435,9 +429,7 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 确保 socket 为非阻塞模式 */
     if (fd < 32 && (coro->nonblock_fds_set & (1U << fd))) {

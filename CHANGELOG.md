@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `coco_yield()` return type changed from `void` to `int` to support `ENSURE_IN_CORO` guard
+
 ## [2.1.0] - 2026-06-04
 
 ### Fixed
