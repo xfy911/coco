@@ -497,10 +497,18 @@ int coco_sched_run(coco_sched_t *sched) {
                 coco_poll_wait(sched, timeout_ms);
             } else if (timeout_ms < 0) {
                 /* 无 I/O fd 且无定时器，短暂休眠后重试（避免忙等） */
+#ifdef _WIN32
+                coco_preempt_sleep_ex(1);  /* alertable wait for APC delivery */
+#else
                 usleep(1000);  /* 1ms */
+#endif
             } else if (timeout_ms > 0) {
                 /* 有定时器但无 I/O，等待定时器到期 */
+#ifdef _WIN32
+                coco_preempt_sleep_ex((uint64_t)timeout_ms);  /* alertable wait for APC delivery */
+#else
                 usleep((useconds_t)(timeout_ms * 1000));
+#endif
             }
         }
     }

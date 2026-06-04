@@ -363,4 +363,9 @@ void fd_table_clear(fd_table_t *ft, int fd);
 /* Channel select cleanup (for coco_destroy) */
 void coco_select_cleanup(coco_coro_t *coro);
 
+/* Windows APC preemption alertable sleep */
+#ifdef _WIN32
+void coco_preempt_sleep_ex(uint64_t timeout_ms);
+#endif
+
 #endif /* COCO_INTERNAL_H */

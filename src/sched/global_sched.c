@@ -415,6 +415,17 @@ static void *worker_loop(void *arg) {
             }
             /* 计算定时器超时 */
             uint64_t next_expire = coco_timer_wheel_next_expire(p->timer_wheel);
+#ifdef _WIN32
+            {
+                uint64_t now_ms = get_current_time_ms_internal();
+                uint64_t wait_ms = (next_expire > now_ms) ? (next_expire - now_ms) : 1;
+                if (wait_ms == 0) wait_ms = 1;
+                if (wait_ms > 100) wait_ms = 100;  /* 限制最大等待时间 */
+                pthread_mutex_unlock(&gs->idle_lock);
+                coco_preempt_sleep_ex(wait_ms);  /* alertable wait for APC delivery */
+                pthread_mutex_lock(&gs->idle_lock);
+            }
+#else
             struct timespec ts;
             if (next_expire > 0) {
                 uint64_t now_ms = get_current_time_ms_internal();
@@ -426,6 +437,7 @@ static void *worker_loop(void *arg) {
                 /* 无定时器，无限等待 */
                 pthread_cond_wait(&gs->idle_cond, &gs->idle_lock);
             }
+#endif
             pthread_mutex_unlock(&gs->idle_lock);
             coco_preempt_unblock_signal();
         }
