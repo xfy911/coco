@@ -54,6 +54,11 @@ stack_pool_multi_t *stack_pool_multi_create(void) {
         return NULL;
     }
 
+    if (pthread_mutex_init(&pool->lock, NULL) != 0) {
+        free(pool);
+        return NULL;
+    }
+
     /* 初始化 size classes */
     for (int i = 0; i < STACK_POOL_MULTI_NUM_CLASSES; i++) {
         pool->sizes[i] = size_class_table[i];
@@ -92,6 +97,7 @@ void stack_pool_multi_destroy(stack_pool_multi_t *pool) {
         }
     }
 
+    pthread_mutex_destroy(&pool->lock);
     free(pool);
 }
 
@@ -103,6 +109,8 @@ void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
         return NULL;
     }
 
+    pthread_mutex_lock(&pool->lock);
+
     pool->total_allocs++;
 
     int class_idx = stack_pool_multi_get_class_index(size);
@@ -110,6 +118,7 @@ void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
     /* 超出池范围，直接 mmap */
     if (class_idx < 0) {
         pool->pool_misses++;
+        pthread_mutex_unlock(&pool->lock);
         return alloc_stack_mmap(size);
     }
 
@@ -126,11 +135,13 @@ void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
         /* 选择性清零栈 */
         zero_stack(stack_top, actual_size, pool->zero_mode);
 
+        pthread_mutex_unlock(&pool->lock);
         return stack_top;
     }
 
     /* 空闲链表为空，分配新栈 */
     pool->pool_misses++;
+    pthread_mutex_unlock(&pool->lock);
     return alloc_stack_mmap(pool->sizes[class_idx]);
 }
 
@@ -142,18 +153,22 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
         return;
     }
 
+    pthread_mutex_lock(&pool->lock);
+
     pool->total_frees++;
 
     int class_idx = stack_pool_multi_get_class_index(size);
 
     /* 超出池范围，直接 munmap */
     if (class_idx < 0) {
+        pthread_mutex_unlock(&pool->lock);
         free_stack_mmap(stack_top, size);
         return;
     }
 
     /* 池已满，直接 munmap */
     if (pool->counts[class_idx] >= pool->limits[class_idx]) {
+        pthread_mutex_unlock(&pool->lock);
         free_stack_mmap(stack_top, size);
         return;
     }
@@ -169,6 +184,8 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
     node->next = pool->freelists[class_idx];
     pool->freelists[class_idx] = node;
     pool->counts[class_idx]++;
+
+    pthread_mutex_unlock(&pool->lock);
 }
 
 /**

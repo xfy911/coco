@@ -118,6 +118,7 @@ struct coco_coro {
     void *stack_base;      /* 栈起始地址 */
     void *stack_top;       /* 栈顶地址 */
     size_t stack_size;     /* 栈大小 */
+    void *stack_pool;      /* 分配此栈的池指针，释放时使用 */
 
     void (*entry)(void*);  /* 入口函数 */
     void *arg;             /* 入口参数 */

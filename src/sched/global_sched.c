@@ -373,8 +373,8 @@ static void *worker_loop(void *arg) {
             if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
                 atomic_fetch_sub(&gs->active_coroutines, 1);
                 /* Free dead coroutine */
-                if (coro->stack_base && p->stack_pool) {
-                    stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool,
+                if (coro->stack_base && coro->stack_pool) {
+                    stack_pool_multi_free((stack_pool_multi_t *)coro->stack_pool,
                                           coro->stack_top, coro->stack_size);
                     coro->stack_base = NULL;
                 }
@@ -417,8 +417,8 @@ static void *worker_loop(void *arg) {
                 if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_DEAD) {
                     atomic_fetch_sub(&gs->active_coroutines, 1);
                     /* Free dead coroutine */
-                    if (coro->stack_base && p->stack_pool) {
-                        stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool,
+                    if (coro->stack_base && coro->stack_pool) {
+                        stack_pool_multi_free((stack_pool_multi_t *)coro->stack_pool,
                                               coro->stack_top, coro->stack_size);
                         coro->stack_base = NULL;
                     }

@@ -118,6 +118,9 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
         size_t actual_stack_size = (class_idx >= 0) ?
             stack_pool_multi_get_class_size(class_idx) : stack_size;
 
+        /* 记录分配此栈的池指针，释放时使用 */
+        void *alloc_pool = p->stack_pool;
+
         coco_coro_t *coro = calloc(1, sizeof(coco_coro_t));
         if (!coro) {
             stack_pool_multi_free((stack_pool_multi_t *)p->stack_pool, stack_top, actual_stack_size);
@@ -128,6 +131,7 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
         coro->stack_top = stack_top;
         coro->stack_base = (void *)((uintptr_t)stack_top - actual_stack_size - 4096);
         coro->stack_size = actual_stack_size;
+        coro->stack_pool = alloc_pool;
         coro->entry = entry;
         coro->arg = arg;
         coro->id = atomic_fetch_add(&gs->next_coro_id, 1);

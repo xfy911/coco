@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <pthread.h>
 
 /* 栈池大小类 - 8 种尺寸 */
 #define STACK_POOL_MULTI_NUM_CLASSES  8
@@ -37,6 +38,8 @@ typedef struct stack_pool_multi {
     uint64_t total_frees;       /* 总释放次数 */
     uint64_t pool_hits;         /* 池命中次数 */
     uint64_t pool_misses;       /* 池未命中次数 */
+
+    pthread_mutex_t lock;       /* 保护所有字段的互斥锁 */
 } stack_pool_multi_t;
 
 /* API */
