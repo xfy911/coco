@@ -172,40 +172,121 @@ void schedule_ready(coco_coro_t *g) {
     coco_global_runq_put(g);
 }
 
-/* 负载均衡检查 */
+/* 负载均衡: 从过载处理器迁移协程到全局队列 */
 bool schedule_balanced(coco_global_sched_t *sched) {
     if (!sched || sched->processor_count == 0) {
         return true;
     }
 
     /* 计算平均负载 */
-    uint64_t total = 0;
+    uint64_t total = coco_global_runq_size();
     for (uint32_t i = 0; i < sched->processor_count; i++) {
         coco_processor_t *p = coco_processor_get(i);
         if (p) {
             total += runq_size(p);
         }
     }
-    total += coco_global_runq_size();
-
     double avg = (double)total / sched->processor_count;
-    if (avg == 0) {
+    if (avg < 4.0) {
+        return true;  /* 负载不足，无需均衡 */
+    }
+
+    /* Phase 1: 在 trylock 下从过载 P 收集协程到临时链表 */
+    coco_coro_t *to_move_head = NULL;
+    coco_coro_t *to_move_tail = NULL;
+    uint32_t moved_count = 0;
+
+    for (uint32_t i = 0; i < sched->processor_count; i++) {
+        coco_processor_t *p = coco_processor_get(i);
+        if (!p) {
+            continue;
+        }
+
+        uint32_t size = runq_size(p);
+        if (size <= avg * 1.5) {
+            continue;  /* 未过载 */
+        }
+
+        uint32_t target = (uint32_t)(avg * 1.2);
+        uint32_t n = (size > target) ? (size - target) : 0;
+        if (n == 0) {
+            continue;
+        }
+
+        if (pthread_mutex_trylock(&p->local_runq_lock) != 0) {
+            continue;  /* 锁竞争，跳过此 P */
+        }
+
+        for (uint32_t j = 0; j < n; j++) {
+            /* 直接从队列头部取出（与 runq_get 逻辑一致，但已持有锁） */
+            coco_coro_t *g = p->local_runq_head;
+            if (!g) {
+                break;
+            }
+            p->local_runq_head = g->next;
+            if (p->local_runq_head) {
+                p->local_runq_head->prev = NULL;
+            } else {
+                p->local_runq_tail = NULL;
+            }
+            p->local_runq_size--;
+
+            /* 从原链表分离并加入临时链表 */
+            g->prev = NULL;
+            g->next = NULL;
+            if (to_move_tail) {
+                to_move_tail->next = g;
+                to_move_tail = g;
+            } else {
+                to_move_head = to_move_tail = g;
+            }
+            moved_count++;
+        }
+        pthread_mutex_unlock(&p->local_runq_lock);
+    }
+
+    if (moved_count == 0) {
         return true;
     }
 
-    /* 检查方差 */
-    double variance = 0;
-    for (uint32_t i = 0; i < sched->processor_count; i++) {
-        coco_processor_t *p = coco_processor_get(i);
-        if (p) {
-            double diff = runq_size(p) - avg;
-            variance += diff * diff;
-        }
-    }
-    variance /= sched->processor_count;
+    /* Phase 2: 批量插入全局队列（不持有任何 local 锁） */
+    extern int coco_preempt_block_signal(void);
+    extern int coco_preempt_unblock_signal(void);
 
-    /* 方差 < 平均值的 20% */
-    return variance < (avg * 0.2 * avg * 0.2);
+    coco_preempt_block_signal();
+    pthread_mutex_lock(&sched->global_runq_lock);
+
+    for (coco_coro_t *g = to_move_head; g;) {
+        coco_coro_t *next = g->next;
+        g->next = NULL;
+        g->prev = sched->global_runq_tail;
+        if (sched->global_runq_tail) {
+            sched->global_runq_tail->next = g;
+        } else {
+            sched->global_runq_head = g;
+        }
+        sched->global_runq_tail = g;
+        g = next;
+    }
+    sched->global_runq_size += moved_count;
+
+    pthread_mutex_unlock(&sched->global_runq_lock);
+    coco_preempt_unblock_signal();
+
+    /* 唤醒空闲 worker 从全局队列窃取 */
+    uint32_t idle = atomic_load(&sched->idle_count);
+    if (idle > 0) {
+        uint32_t to_wake = (moved_count < idle) ? moved_count : idle;
+        coco_preempt_block_signal();
+        pthread_mutex_lock(&sched->idle_lock);
+        for (uint32_t i = 0; i < to_wake; i++) {
+            pthread_cond_signal(&sched->idle_cond);
+        }
+        pthread_mutex_unlock(&sched->idle_lock);
+        coco_preempt_unblock_signal();
+    }
+
+    return true;
 }
 
 /* 统计偷取成功率 */
