@@ -320,6 +320,9 @@ if(COCO_BUILD_EXAMPLES)
         multithread
         http_static
         http_static_mt
+        hot_stack
+        dynamic_stack
+        context_api
     )
 
     foreach(example_name ${EXAMPLES})
