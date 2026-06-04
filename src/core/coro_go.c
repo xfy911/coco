@@ -26,7 +26,10 @@ static int select_best_p(void) {
     }
 
     /* 优先选择当前线程绑定的 P */
-    /* TODO: 实现当前线程 P 绑定检测 */
+    coco_processor_t *current_p = get_current_p();
+    if (current_p) {
+        return (int)current_p->id;
+    }
 
     /* 选择队列最短的 P */
     uint32_t min_size = UINT32_MAX;

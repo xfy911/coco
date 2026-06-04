@@ -158,4 +158,7 @@ int coco_global_sched_start(uint32_t num_workers);
 int coco_global_sched_wait(void);
 int coco_global_sched_stop(void);
 
+/* 获取当前线程绑定的 P (worker 线程内部使用) */
+coco_processor_t *get_current_p(void);
+
 #endif /* GLOBAL_SCHED_H */

@@ -20,6 +20,9 @@ extern int coco_preempt_unblock_signal(void);
 /* 全局调度器实例 */
 static coco_global_sched_t *g_global_sched = NULL;
 
+/* 当前线程绑定的 P (仅 worker 线程设置) */
+static _Thread_local coco_processor_t *g_current_p = NULL;
+
 /**
  * 获取 CPU 核心数
  */
@@ -350,6 +353,9 @@ static void *worker_loop(void *arg) {
     /* Set return context for this worker thread */
     g_return_ctx = &p->m->ctx;
 
+    /* 标记当前线程绑定的 P */
+    g_current_p = p;
+
     while (atomic_load(&gs->running)) {
         /* 处理定时器 tick */
         coco_timer_tick(p->timer_wheel, gs->main_sched);
@@ -459,7 +465,15 @@ static void *worker_loop(void *arg) {
             atomic_fetch_sub(&gs->idle_count, 1);
         }
     }
+    g_current_p = NULL;  /* 清除线程绑定的 P */
     return NULL;
+}
+
+/**
+ * 获取当前线程绑定的 P
+ */
+coco_processor_t *get_current_p(void) {
+    return g_current_p;
 }
 
 /**
