@@ -214,6 +214,17 @@ void coco_preempt_checkpoint(void) {
     }
 }
 
+#ifndef _WIN32
+static sigset_t preempt_sigset(void) {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+#ifdef SIGURG
+    sigaddset(&set, SIGURG);
+#endif
+    return set;
+}
+
 /**
  * coco_preempt_block_signal - 阻塞抢占信号
  *
@@ -223,12 +234,7 @@ void coco_preempt_checkpoint(void) {
  * @return COCO_OK 成功，COCO_ERROR 失败
  */
 int coco_preempt_block_signal(void) {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, SIGALRM);
-#ifdef SIGURG
-    sigaddset(&set, SIGURG);
-#endif
+    sigset_t set = preempt_sigset();
     return pthread_sigmask(SIG_BLOCK, &set, NULL) == 0 ? COCO_OK : COCO_ERROR;
 }
 
@@ -241,11 +247,10 @@ int coco_preempt_block_signal(void) {
  * @return COCO_OK 成功，COCO_ERROR 失败
  */
 int coco_preempt_unblock_signal(void) {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, SIGALRM);
-#ifdef SIGURG
-    sigaddset(&set, SIGURG);
-#endif
+    sigset_t set = preempt_sigset();
     return pthread_sigmask(SIG_UNBLOCK, &set, NULL) == 0 ? COCO_OK : COCO_ERROR;
 }
+#else
+int coco_preempt_block_signal(void) { return COCO_OK; }
+int coco_preempt_unblock_signal(void) { return COCO_OK; }
+#endif
