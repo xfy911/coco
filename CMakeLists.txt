@@ -240,6 +240,7 @@ if(COCO_BUILD_TESTS)
         test_stack_grow
         stress_coro_count
         stress_channel_burst
+        stress_channel_mt_burst
         stress_timer_wheel
         stress_io_thunder
         stress_mt_scaling
