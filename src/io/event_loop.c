@@ -41,6 +41,8 @@ void coco_poll_wait_ready(int fd, short events) {
 
 /* === 协程 I/O 操作 === */
 
+#ifndef _WIN32
+
 /**
  * coco_read - 协程读取（阻塞）
  *
@@ -241,6 +243,8 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
 
     return COCO_ERROR;
 }
+
+#endif /* _WIN32 */
 
 /* === Sleep === */
 
