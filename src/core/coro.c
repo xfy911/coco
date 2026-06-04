@@ -16,6 +16,47 @@ _Thread_local coco_sched_t *g_current_sched = NULL;
 _Thread_local coco_coro_t *g_current_coro = NULL;
 _Thread_local coco_ctx_t *g_return_ctx = NULL;
 
+/* 辅助函数：如果指针指向旧栈范围，则调整 */
+static inline void adjust_ptr_if_in_old_stack(void **ptr, uintptr_t old_base, uintptr_t old_top, ptrdiff_t delta) {
+    uintptr_t val = (uintptr_t)*ptr;
+    if (val >= old_base && val < old_top) {
+        *ptr = (void *)(val + delta);
+    }
+}
+
+/* 恢复栈时，调整上下文保存的寄存器中的栈指针 */
+static void adjust_ctx_stack_pointers(coco_coro_t *coro, uintptr_t old_base, uintptr_t old_top, ptrdiff_t delta) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    adjust_ptr_if_in_old_stack(&coro->ctx.fp, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x19, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x20, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x21, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x22, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x23, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x24, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x25, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x26, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x27, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.x28, old_base, old_top, delta);
+#elif defined(_WIN32) && defined(__x86_64__)
+    adjust_ptr_if_in_old_stack(&coro->ctx.fp, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.rbx, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.rsi, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.rdi, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r12, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r13, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r14, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r15, old_base, old_top, delta);
+#elif defined(__x86_64__)
+    adjust_ptr_if_in_old_stack(&coro->ctx.fp, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.rbx, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r12, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r13, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r14, old_base, old_top, delta);
+    adjust_ptr_if_in_old_stack(&coro->ctx.r15, old_base, old_top, delta);
+#endif
+}
+
 /* 抢占 API 声明 */
 int coco_preempt_init(void);
 void coco_preempt_cleanup(void);
@@ -372,11 +413,10 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
                         *p = (uintptr_t)((char *)*p + delta);
                     }
                 }
+                /* 调整上下文保存的寄存器中的栈指针 */
+                adjust_ctx_stack_pointers(coro, old_base, old_top, delta);
             }
             coro->ctx.sp = (char *)coro->ctx.sp + delta;
-            if (coro->ctx.fp) {
-                coro->ctx.fp = (char *)coro->ctx.fp + delta;
-            }
         } else {
             coco_ctx_init(&coro->ctx, slot->stack_top, coro_entry_wrapper, coro->arg);
         }

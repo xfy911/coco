@@ -274,6 +274,7 @@ if(COCO_BUILD_TESTS)
         target_include_directories(test_ctx_x86_64 PRIVATE ${CMAKE_SOURCE_DIR}/src)
         target_link_libraries(test_ctx_x86_64 coco)
         add_test(NAME test_ctx_x86_64 COMMAND test_ctx_x86_64)
+        target_compile_options(test_ctx_x86_64 PRIVATE -fomit-frame-pointer)
     endif()
 
     # 基准测试
