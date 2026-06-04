@@ -268,6 +268,14 @@ if(COCO_BUILD_TESTS)
         add_test(NAME test_ctx_arm64 COMMAND test_ctx_arm64)
     endif()
 
+    # x86-64 上下文 callee-saved 寄存器完整性测试
+    if(ARCH STREQUAL "x86_64")
+        add_executable(test_ctx_x86_64 tests/unit/test_ctx_x86_64.c tests/unit/ctx/regs_x86_64.S)
+        target_include_directories(test_ctx_x86_64 PRIVATE ${CMAKE_SOURCE_DIR}/src)
+        target_link_libraries(test_ctx_x86_64 coco)
+        add_test(NAME test_ctx_x86_64 COMMAND test_ctx_x86_64)
+    endif()
+
     # 基准测试
     set(BENCH_TESTS
         bench_switch
