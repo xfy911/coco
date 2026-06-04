@@ -223,6 +223,7 @@ if(COCO_BUILD_TESTS)
         test_context_coro
         test_platform_abstraction
         test_sched_stats
+        test_sched_reinit
         test_coco_go
         test_context_value
         test_frame_walker

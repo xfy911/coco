@@ -515,7 +515,7 @@ int coco_global_sched_start(uint32_t num_workers) {
     }
 
     atomic_store(&gs->running, true);
-    atomic_init(&gs->next_coro_id, 0);
+    atomic_store(&gs->next_coro_id, 0);
 
     /* Create M (worker threads) for each P */
     for (uint32_t i = 0; i < gs->processor_count; i++) {
@@ -633,6 +633,75 @@ int coco_global_sched_stop(void) {
         coco_sched_destroy(gs->main_sched);
         gs->main_sched = NULL;
     }
+
+    /* 清空全局队列 */
+    coco_preempt_block_signal();
+    pthread_mutex_lock(&gs->global_runq_lock);
+    coco_coro_t *g = gs->global_runq_head;
+    while (g) {
+        coco_coro_t *next = g->next;
+        if (g->stack_base) {
+            if (g->stack_pool) {
+                stack_pool_multi_free((stack_pool_multi_t *)g->stack_pool, g->stack_top, g->stack_size);
+            } else {
+                /* fallback to munmap */
+            }
+        }
+        free(g);
+        g = next;
+    }
+    gs->global_runq_head = NULL;
+    gs->global_runq_tail = NULL;
+    gs->global_runq_size = 0;
+    pthread_mutex_unlock(&gs->global_runq_lock);
+    coco_preempt_unblock_signal();
+
+    /* 清空每个 P 的本地队列 */
+    for (uint32_t i = 0; i < gs->processor_count; i++) {
+        coco_processor_t *p = gs->processors[i];
+        if (!p) continue;
+        pthread_mutex_lock(&p->local_runq_lock);
+        coco_coro_t *g = p->local_runq_head;
+        while (g) {
+            coco_coro_t *next = g->next;
+            if (g->stack_base && g->stack_pool) {
+                stack_pool_multi_free((stack_pool_multi_t *)g->stack_pool, g->stack_top, g->stack_size);
+            }
+            free(g);
+            g = next;
+        }
+        p->local_runq_head = NULL;
+        p->local_runq_tail = NULL;
+        atomic_store(&p->local_runq_size, 0);
+        pthread_mutex_unlock(&p->local_runq_lock);
+    }
+
+    /* 重置空闲列表 */
+    gs->idle_processors = NULL;
+    gs->idle_machines = NULL;
+
+    /* 重新初始化每个 P 的本地队列锁 */
+    for (uint32_t i = 0; i < gs->processor_count; i++) {
+        coco_processor_t *p = gs->processors[i];
+        if (!p) continue;
+        pthread_mutex_destroy(&p->local_runq_lock);
+        pthread_mutex_init(&p->local_runq_lock, NULL);
+    }
+
+    /* 重置计数器 */
+    atomic_store(&gs->active_coroutines, 0);
+    atomic_store(&gs->total_coroutines, 0);
+    atomic_store(&gs->idle_count, 0);
+    atomic_store(&gs->next_coro_id, 0);
+
+    /* 重新初始化锁 */
+    pthread_mutex_destroy(&gs->global_runq_lock);
+    pthread_mutex_destroy(&gs->idle_lock);
+    pthread_cond_destroy(&gs->idle_cond);
+
+    pthread_mutex_init(&gs->global_runq_lock, NULL);
+    pthread_mutex_init(&gs->idle_lock, NULL);
+    pthread_cond_init(&gs->idle_cond, NULL);
 
     return COCO_OK;
 }
