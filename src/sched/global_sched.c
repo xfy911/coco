@@ -182,6 +182,7 @@ int coco_global_init(uint32_t num_procs) {
     atomic_init(&g_global_sched->active_coroutines, 0);
     atomic_init(&g_global_sched->next_coro_id, 0);
     atomic_init(&g_global_sched->running, false);
+    atomic_init(&g_global_sched->idle_count, 0);
 
     return 0;
 }
@@ -240,25 +241,25 @@ int coco_global_runq_put(struct coco_coro *g) {
     }
     g_global_sched->global_runq_tail = g;
     g_global_sched->global_runq_size++;
+    uint64_t runq_size_after_add = g_global_sched->global_runq_size;
 
     pthread_mutex_unlock(&g_global_sched->global_runq_lock);
     coco_preempt_unblock_signal();
 
-    /* 按需唤醒空闲线程: 根据全局队列长度和可用 P 决定唤醒数量
+    /* 按需唤醒空闲线程: 根据全局队列长度和空闲 worker 数量决定唤醒数量
      * 避免 thundering herd: 只唤醒最少数量的空闲线程 */
-    int to_wake = (int)atomic_load(&g_global_sched->active_coroutines);
-    if (to_wake == 0) to_wake = 1;  /* 至少唤醒一个 */
-    if (to_wake > (int)g_global_sched->processor_count) {
-        to_wake = g_global_sched->processor_count;
-    }
+    uint32_t idle = atomic_load(&g_global_sched->idle_count);
+    if (idle > 0) {
+        uint32_t to_wake = (uint32_t)(runq_size_after_add < (uint64_t)idle ? runq_size_after_add : idle);
 
-    coco_preempt_block_signal();
-    pthread_mutex_lock(&g_global_sched->idle_lock);
-    for (int i = 0; i < to_wake; i++) {
-        pthread_cond_signal(&g_global_sched->idle_cond);
+        coco_preempt_block_signal();
+        pthread_mutex_lock(&g_global_sched->idle_lock);
+        for (uint32_t i = 0; i < to_wake; i++) {
+            pthread_cond_signal(&g_global_sched->idle_cond);
+        }
+        pthread_mutex_unlock(&g_global_sched->idle_lock);
+        coco_preempt_unblock_signal();
     }
-    pthread_mutex_unlock(&g_global_sched->idle_lock);
-    coco_preempt_unblock_signal();
 
     return 0;
 }
@@ -413,6 +414,9 @@ static void *worker_loop(void *arg) {
                 }
                 continue;
             }
+            /* 标记为空闲，准备等待 */
+            atomic_fetch_add(&gs->idle_count, 1);
+
             /* 计算定时器超时 */
             uint64_t next_expire = coco_timer_wheel_next_expire(p->timer_wheel);
 #ifdef _WIN32
@@ -450,6 +454,9 @@ static void *worker_loop(void *arg) {
 #endif
             pthread_mutex_unlock(&gs->idle_lock);
             coco_preempt_unblock_signal();
+
+            /* 退出空闲状态 */
+            atomic_fetch_sub(&gs->idle_count, 1);
         }
     }
     return NULL;

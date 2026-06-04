@@ -58,6 +58,9 @@ typedef struct coco_global_sched {
     struct coco_machine *idle_machines;
     pthread_cond_t idle_cond;
 
+    /* 空闲 worker 数量 (用于精准唤醒) */
+    atomic_uint_fast32_t idle_count;
+
     /* 主调度器 (用于定时器唤醒) */
     struct coco_sched *main_sched;
 
