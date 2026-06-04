@@ -89,6 +89,7 @@ set(CORE_SOURCES
     src/core/safety.c
     src/core/preempt.c
     src/core/hot_stack.c
+    src/core/version.c
     src/sched/global_sched.c
     src/sched/runq.c
     src/sched/sched.c

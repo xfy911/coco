@@ -823,6 +823,38 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
                                 const coco_go_opts_t *opts);
 /** @} */
 
+/* === Version === */
+/** @defgroup Version Version API
+ *  @brief Runtime version query functions
+ *  @{
+ */
+
+/**
+ * @brief Get the full version string
+ * @return Version string in "X.Y.Z" format
+ */
+const char *coco_version(void);
+
+/**
+ * @brief Get the major version number
+ * @return Major version (e.g., 2 for "2.1.0")
+ */
+int coco_version_major(void);
+
+/**
+ * @brief Get the minor version number
+ * @return Minor version (e.g., 1 for "2.1.0")
+ */
+int coco_version_minor(void);
+
+/**
+ * @brief Get the patch version number
+ * @return Patch version (e.g., 0 for "2.1.0")
+ */
+int coco_version_patch(void);
+
+/** @} */
+
 #ifdef __cplusplus
 }
 #endif
