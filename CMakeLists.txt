@@ -242,6 +242,7 @@ if(COCO_BUILD_TESTS)
         stress_channel_burst
         stress_timer_wheel
         stress_io_thunder
+        stress_mt_scaling
         test_hot_stack
         test_shared_stack_stress
         test_coro_guard
