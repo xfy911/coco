@@ -388,6 +388,12 @@ static void *worker_loop(void *arg) {
             runq_push_overflow(p);
             pthread_mutex_unlock(&p->local_runq_lock);
             coco_preempt_unblock_signal();
+
+            /* Periodic load balancing every 100 coroutines processed */
+            static _Thread_local int balance_counter = 0;
+            if (++balance_counter % 100 == 0) {
+                schedule_balanced(gs);
+            }
         } else {
             /* Idle wait - 持锁重检查避免丢失唤醒 (H2) */
             coco_preempt_block_signal();
