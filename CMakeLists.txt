@@ -230,6 +230,7 @@ if(COCO_BUILD_TESTS)
         test_channel_select
         test_stack_growth
         test_preempt
+        test_preempt_block
         test_fairness
         test_long_running
         test_safety

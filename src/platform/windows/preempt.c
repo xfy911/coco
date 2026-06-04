@@ -151,22 +151,3 @@ void coco_preempt_sleep_ex(uint64_t timeout_ms) {
     SleepEx((DWORD)timeout_ms, TRUE);
 }
 
-/**
- * coco_preempt_block_signal - 阻塞抢占信号（Windows stub）
- *
- * @return COCO_OK
- */
-int coco_preempt_block_signal(void) {
-    /* Windows 无信号阻塞机制，暂不实现 */
-    return COCO_OK;
-}
-
-/**
- * coco_preempt_unblock_signal - 解除阻塞抢占信号（Windows stub）
- *
- * @return COCO_OK
- */
-int coco_preempt_unblock_signal(void) {
-    /* Windows 无信号阻塞机制，暂不实现 */
-    return COCO_OK;
-}

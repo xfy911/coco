@@ -115,28 +115,3 @@ int coco_preempt_platform_disarm(void) {
     return COCO_OK;
 }
 
-/**
- * coco_preempt_block_signal - 阻塞抢占信号
- *
- * 用于栈增长等关键区域。
- *
- * @return COCO_OK 成功
- */
-int coco_preempt_block_signal(void) {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, COCO_PREEMPT_SIGNAL);
-    return pthread_sigmask(SIG_BLOCK, &set, NULL);
-}
-
-/**
- * coco_preempt_unblock_signal - 解除阻塞抢占信号
- *
- * @return COCO_OK 成功
- */
-int coco_preempt_unblock_signal(void) {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, COCO_PREEMPT_SIGNAL);
-    return pthread_sigmask(SIG_UNBLOCK, &set, NULL);
-}

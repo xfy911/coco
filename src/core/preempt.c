@@ -12,6 +12,7 @@
 #include <string.h>
 #include <setjmp.h>
 #include <unistd.h>
+#include <pthread.h>
 
 /* 抢占间隔（毫秒） */
 #define COCO_PREEMPT_INTERVAL_MS 10
@@ -211,4 +212,40 @@ void coco_preempt_checkpoint(void) {
         g_preempt_state.preempt_pending = 0;
         coco_yield();
     }
+}
+
+/**
+ * coco_preempt_block_signal - 阻塞抢占信号
+ *
+ * 使用 pthread_sigmask 阻塞 SIGALRM（和 SIGURG），
+ * 保护关键区域免受抢占信号中断。
+ *
+ * @return COCO_OK 成功，COCO_ERROR 失败
+ */
+int coco_preempt_block_signal(void) {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+#ifdef SIGURG
+    sigaddset(&set, SIGURG);
+#endif
+    return pthread_sigmask(SIG_BLOCK, &set, NULL) == 0 ? COCO_OK : COCO_ERROR;
+}
+
+/**
+ * coco_preempt_unblock_signal - 解除阻塞抢占信号
+ *
+ * 使用 pthread_sigmask 解除阻塞 SIGALRM（和 SIGURG），
+ * 恢复抢占信号的正常投递。
+ *
+ * @return COCO_OK 成功，COCO_ERROR 失败
+ */
+int coco_preempt_unblock_signal(void) {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGALRM);
+#ifdef SIGURG
+    sigaddset(&set, SIGURG);
+#endif
+    return pthread_sigmask(SIG_UNBLOCK, &set, NULL) == 0 ? COCO_OK : COCO_ERROR;
 }
