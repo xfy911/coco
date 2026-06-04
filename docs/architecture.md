@@ -49,8 +49,8 @@ coco 是一个生产级 C 协程库，采用**有栈协程 (stackful coroutine)*
 | Timer | `src/timer/timer_wheel.c` | 4 层时间轮、定时器注册/触发 |
 
 **关键设计决策**：
-- 调度器逻辑集中在 `coro.c`，`sched.c` 仅为占位（`src/core/sched.c:2`）
-- 全局单线程模型：`g_current_sched` 和 `g_current_coro` 为全局指针（`src/core/coro.c:11-12`）
+- 单线程调度器逻辑集中在 `coro.c`；多线程调度器在 `src/sched/sched.c`（232+ 行，`find_runnable()`、工作窃取、负载均衡）（`src/sched/sched.c:1`）
+- 单线程模式下：`g_current_sched` 和 `g_current_coro` 为全局指针（`src/core/coro.c:11-12`）
 - 协程入口统一由 `coro_entry_wrapper` 包装，确保退出时自动调用 `coco_exit`（`src/core/coro.c:15-21`）
 
 ---
@@ -400,7 +400,7 @@ coco_channel_recv(ch, &value)
 - 注册时使用 `EV_ADD | EV_ONESHOT`（`poll_macos.c:82`）
 - 注销时需分别删除 EVFILT_READ 和 EVFILT_WRITE（`poll_macos.c:108-112`）
 
-**Windows**（`src/io/poll_windows.c`）：当前为占位实现。
+**Windows**（`src/io/poll_windows.c`）：使用 Windows 事件通知机制实现，502 行完整支持（`src/io/poll_windows.c:1`）。
 
 ### 5.3 协程 I/O 流程
 
@@ -750,6 +750,57 @@ stack_top
 
 ---
 
+## 8. 多线程调度器架构
+
+### 8.1 P/M 模型
+
+coco v2.0+ 引入 Go 风格的 P/M 多线程调度器：
+
+- **P (Processor)**: 逻辑处理器，每个有独立的本地运行队列、栈池、定时器轮
+- **M (Machine)**: OS 线程，绑定到一个 P 上运行
+- **全局队列**: 本地队列溢出时推入全局队列，空闲工作者从全局队列窃取
+- **Netpoller**: 专用 I/O 轮询线程，I/O 就绪时将协程分发到全局队列
+
+### 8.2 工作窃取
+
+每个工作者线程在本地队列为空时：
+1. 尝试从全局队列获取
+2. 随机选择其他 P，尝试窃取一半任务
+3. 自适应退避（失败多次后减少尝试频率）
+
+### 8.3 负载均衡
+
+`schedule_balanced()` 定期检查全局队列负载方差，当检测到严重不均衡时触发重新分配。
+
+---
+
+## 9. 共享热栈 (Hot Stack)
+
+### 9.1 设计
+
+- 8 个 128KB 的预分配热槽位（hot slot）
+- 小协程（<64KB 栈需求）默认使用热槽位
+- LRU 驱逐：槽位满时驱逐最久未使用的协程，将其栈备份到堆
+- 零拷贝恢复：协程恢复时若栈仍在热槽位，直接切换（无需复制）
+
+### 9.2 栈指针重写
+
+当协程被驱逐后恢复到一个新的热槽位时，栈内指针需要重写。通过扫描栈并使用 `adjust_ctx_stack_pointers()` 调整寄存器和栈帧中的指针。
+
+---
+
+## 10. 动态栈增长
+
+### 10.1 机制
+
+- 协程创建时指定小初始栈（如 2KB）
+- 当栈接近容量时，SIGSEGV 在 guard page 触发
+- 信号处理器通过 `sigsetjmp`/`siglongjmp` 恢复控制权
+- 分配新栈（2x 增长，上限 8MB），复制内容，调整帧指针
+- 需要栈映射（stack map）来调整栈内指针
+
+---
+
 ## 附录 A: 协程状态机
 
 ```
@@ -808,24 +859,39 @@ stack_top
 
 | 文件 | 行数 | 核心内容 |
 |------|------|----------|
-| `include/coco.h` | 247 | 公开 API、错误码、状态枚举 |
-| `src/coco_internal.h` | 110 | 内部结构体、内部 API 声明 |
-| `src/core/coro.c` | 364 | 调度器 + 协程生命周期 |
-| `src/core/sched.c` | 3 | 占位文件 |
-| `src/core/context.c` | 54 | 上下文初始化 (C) |
-| `src/core/stack.c` | 90 | mmap 栈分配 + guard page |
-| `src/core/signal.c` | 182 | SIGSEGV 栈溢出检测 |
-| `src/channel/channel.c` | 290 | Channel 实现 |
-| `src/io/event_loop.c` | 26 | coco_sleep |
-| `src/io/poll_linux.c` | 291 | epoll I/O 多路复用 |
-| `src/io/poll_macos.c` | 308 | kqueue I/O 多路复用 |
-| `src/io/poll_windows.c` | 5 | 占位文件 |
-| `src/timer/timer_wheel.c` | 305 | 4 层时间轮 |
-| `src/platform/linux/ctx_x86_64.S` | 78 | Linux x86-64 上下文切换 |
-| `src/platform/linux/ctx_arm64.S` | 108 | Linux ARM64 上下文切换 (含 d8-d15) |
-| `src/platform/macos/ctx_x86_64.S` | 48 | macOS x86-64 上下文切换 |
-| `src/platform/macos/ctx_arm64.S` | 108 | macOS ARM64 上下文切换 (含 d8-d15) |
-| `src/platform/windows/ctx_x86_64.S` | 120 | Windows x86-64 上下文切换 (含 XMM) |
-| `src/platform/windows/ctx_arm64.S` | 70 | Windows ARM64 上下文切换 |
-| `src/platform/abi_detect.c` | 95 | ABI 检测与运行时架构查询 |
-| `include/coco_abi.h` | 80 | ABI 信息头文件 |
+| `include/coco.h` | 829 | 公开 API、错误码、状态枚举 |
+| `include/coco_abi.h` | 98 | ABI 信息头文件 |
+| `include/coco_safety.h` | 189 | 安全模式配置（栈增长） |
+| `src/coco_internal.h` | 370 | 内部结构体、内部 API 声明 |
+| `src/core/coro.c` | 901 | 调度器 + 协程生命周期 |
+| `src/core/sched.c` | — | （已移除，功能合并至 sched/） |
+| `src/core/context.c` | 129 | 上下文初始化 (C) |
+| `src/core/context_api.c` | 472 | 上下文 API 实现 |
+| `src/core/stack.c` | 75 | mmap 栈分配 + guard page |
+| `src/core/stack_common.c` | 147 | 栈通用操作 |
+| `src/core/stack_grow.c` | 318 | 动态栈增长 |
+| `src/core/stack_pool.c` | 140 | 栈池管理 |
+| `src/core/hot_stack.c` | 262 | 共享热栈实现 |
+| `src/core/signal.c` | 256 | SIGSEGV 栈溢出检测 |
+| `src/core/preempt.c` | 271 | 协程抢占 |
+| `src/core/cancel.c` | 67 | 协程取消 |
+| `src/channel/channel.c` | 948 | 单线程 Channel 实现 |
+| `src/channel/channel_mt.c` | 471 | 多线程 Channel 实现 |
+| `src/io/event_loop.c` | 265 | I/O 事件循环 + coco_sleep |
+| `src/io/poll_linux.c` | 340 | epoll I/O 多路复用 |
+| `src/io/poll_macos.c` | 259 | kqueue I/O 多路复用 |
+| `src/io/poll_windows.c` | 502 | Windows I/O 多路复用 |
+| `src/io/poll_iouring.c` | 896 | io_uring I/O 多路复用 |
+| `src/io/netpoller_mt.c` | 578 | 多线程 Netpoller |
+| `src/timer/timer_wheel.c` | 501 | 4 层时间轮 |
+| `src/sched/sched.c` | 232 | 多线程调度器核心 |
+| `src/sched/global_sched.c` | 637 | 全局调度器（P/M 模型） |
+| `src/sched/runq.c` | 206 | 运行队列（工作窃取） |
+| `src/platform/linux/ctx_x86_64.S` | 91 | Linux x86-64 上下文切换 |
+| `src/platform/linux/ctx_arm64.S` | 105 | Linux ARM64 上下文切换 (含 d8-d15) |
+| `src/platform/macos/ctx_x86_64.S` | 77 | macOS x86-64 上下文切换 |
+| `src/platform/macos/ctx_arm64.S` | 107 | macOS ARM64 上下文切换 (含 d8-d15) |
+| `src/platform/windows/ctx_x86_64.S` | 144 | Windows x86-64 上下文切换 (含 XMM) |
+| `src/platform/windows/ctx_arm64.S` | 107 | Windows ARM64 上下文切换 |
+| `src/platform/abi_detect.c` | 94 | ABI 检测与运行时架构查询 |
+| `src/platform/coco_thread.c` | 145 | 线程包装器 |
