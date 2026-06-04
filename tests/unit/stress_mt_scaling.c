@@ -12,24 +12,25 @@ static void worker(void *arg) {
     }
 }
 
-int main(void) {
-    printf("stress_mt_scaling:\n");
-
-    /*
-     * NOTE: Runs one configuration to avoid reinitialization bug.
-     * TODO: Run 1P/2P/4P sequence once scheduler supports reinit.
-     * TODO: Increase coroutine count once stack_pool_multi race is fixed.
-     */
+static void run_config(int nproc, int ncoro) {
     counter = 0;
-    coco_global_sched_start(2);
-    for (int i = 0; i < 100; i++) {
+    coco_global_sched_start(nproc);
+    for (int i = 0; i < ncoro; i++) {
         coco_go(worker, NULL);
     }
     coco_global_sched_wait();
     coco_global_sched_stop();
 
-    assert(counter == 100 * 1000);
-    printf("  P=2 coro=100 counter=%d: OK\n", counter);
+    assert(counter == ncoro * 1000);
+    printf("  P=%d coro=%d counter=%d: OK\n", nproc, ncoro, counter);
+}
+
+int main(void) {
+    printf("stress_mt_scaling:\n");
+
+    run_config(1, 100);
+    run_config(2, 100);
+    run_config(4, 100);
 
     printf("stress_mt_scaling: PASSED\n");
     return 0;

@@ -33,8 +33,13 @@ int main(void) {
     printf("bench_mt_sched:\n");
     double t1 = run(1);
     printf("  1P: %.3fs (%.0f yields/sec)\n", t1, (double)N_CORO * N_OPS / t1);
-    /* NOTE: Cannot run multiple start/stop in one process due to
-     * pre-existing reinitialization bug. Only test 1P. */
+    double t2 = run(2);
+    printf("  2P: %.3fs (%.0f yields/sec)\n", t2, (double)N_CORO * N_OPS / t2);
+    double t4 = run(4);
+    printf("  4P: %.3fs (%.0f yields/sec)\n", t4, (double)N_CORO * N_OPS / t4);
+    if (t1 > 0 && t4 > 0) {
+        printf("  4P speedup: %.2fx\n", t1 / t4);
+    }
     printf("bench_mt_sched: done\n");
     return 0;
 }

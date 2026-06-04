@@ -5,7 +5,20 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- `coco_yield()` return type changed from `void` to `int` to support `ENSURE_IN_CORO` guard
+- `coco_yield()` return type changed from `void` to `int` to support `ENSURE_IN_CORO` guard.
+  **ABI note:** Existing compiled objects must be recompiled against the new header.
+- `coro->state` type changed from `int` (non-atomic) to `_Atomic int` for thread-safety.
+  **ABI note:** Existing compiled objects must be recompiled.
+
+### Fixed
+- Multi-threaded scheduler data races and leaks:
+  - `coro->state` is now `_Atomic` (acquire/release ordering)
+  - `stack_pool_multi` protected by per-pool mutex
+  - Wrong-pool-free on work-stealing fixed via `coro->stack_pool` tracking
+- Scheduler reinitialization: `coco_global_sched_stop()` now fully cleans up state
+- `schedule_balanced()` now actually redistributes coroutines from overloaded P's
+- `schedule_balanced()` releases hot-stack slots before migration
+- Worker thread H2 path now performs load balancing (was skipping `runq_push_overflow` and `schedule_balanced`)
 
 ## [2.1.0] - 2026-06-04
 
