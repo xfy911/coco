@@ -45,11 +45,11 @@ static void test_sleep_basic(void) {
 static void test_sleep_outside_coro(void) {
     printf("  test_sleep_outside_coro: ");
     int ret = coco_sleep(10);
-    if (ret == COCO_ERROR) {
+    if (ret == COCO_ERROR_INVALID) {
         printf("PASS\n");
         tests_passed++;
     } else {
-        printf("FAIL - expected COCO_ERROR\n");
+        printf("FAIL - expected COCO_ERROR_INVALID\n");
         tests_failed++;
     }
 }

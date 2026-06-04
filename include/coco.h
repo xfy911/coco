@@ -396,7 +396,7 @@ void coco_exit(coco_coro_t *coro, void *result);
  * Must be called from within a coroutine. The coroutine remains in
  * COCO_STATE_READY state and will be rescheduled later.
  */
-void coco_yield(void);
+int coco_yield(void);
 
 /**
  * @brief Wait for a coroutine to finish and get its result

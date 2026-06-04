@@ -53,9 +53,7 @@ int coco_read(int fd, void *buf, size_t count) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     coco_poll_set_nonblock(fd);
 
@@ -107,9 +105,7 @@ int coco_write(int fd, const void *buf, size_t count) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     coco_poll_set_nonblock(fd);
 
@@ -165,9 +161,7 @@ int coco_accept(int fd, void *addr, size_t *addrlen) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     coco_poll_set_nonblock(fd);
 
@@ -206,9 +200,7 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     coco_poll_set_nonblock(fd);
 
@@ -256,9 +248,7 @@ int coco_sleep(uint64_t ms) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 注册定时器 */
     coco_timer_add(sched->timer_wheel, ms, coro);

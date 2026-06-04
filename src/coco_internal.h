@@ -297,6 +297,13 @@ void coco_ctx_switch(coco_ctx_t *current, coco_ctx_t *target);
 /* 线程局部返回上下文 (ST: &sched->main_ctx, MT: &p->m->ctx) */
 extern _Thread_local coco_ctx_t *g_return_ctx;
 
+/* 协程上下文检查宏 */
+#define ENSURE_IN_CORO_RET(retval) do { \
+    if (!g_current_coro) return (retval); \
+} while(0)
+
+#define ENSURE_IN_CORO() ENSURE_IN_CORO_RET(COCO_ERROR_INVALID)
+
 /* 上下文初始化 (C 实现) */
 void coco_ctx_init(coco_ctx_t *ctx, void *stack_top, void (*entry)(void*), void *arg);
 

@@ -244,6 +244,7 @@ if(COCO_BUILD_TESTS)
         stress_io_thunder
         test_hot_stack
         test_shared_stack_stress
+        test_coro_guard
     )
 
     # 平台特定测试

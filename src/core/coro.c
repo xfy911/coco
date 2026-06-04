@@ -652,13 +652,11 @@ void coco_exit(coco_coro_t *coro, void *result) {
     coco_ctx_switch(&coro->ctx, g_return_ctx);
 }
 
-void coco_yield(void) {
+int coco_yield(void) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return;
-    }
+    ENSURE_IN_CORO();
 
     if (!coro->is_exclusive && coro->hot_slot_idx >= 0) {
         void *current_sp;
@@ -690,6 +688,8 @@ void coco_yield(void) {
 
     /* 切换回调度器 */
     coco_ctx_switch(&coro->ctx, g_return_ctx);
+
+    return COCO_OK;
 }
 
 void *coco_join(coco_coro_t *coro) {

@@ -335,9 +335,7 @@ int coco_channel_send(coco_channel_t *ch, void *value) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 优先唤醒普通接收者 */
     coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
@@ -442,9 +440,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
     coco_sched_t *sched = g_current_sched;
     coco_coro_t *coro = g_current_coro;
 
-    if (!sched || !coro) {
-        return COCO_ERROR;
-    }
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
 
     /* 有缓冲 channel: 尝试从缓冲区取 */
     if (ch->capacity > 0 && ch->count > 0) {
