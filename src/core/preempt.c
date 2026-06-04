@@ -215,6 +215,8 @@ void coco_preempt_checkpoint(void) {
 }
 
 #ifndef _WIN32
+static _Thread_local int g_preempt_block_nest = 0;
+
 static sigset_t preempt_sigset(void) {
     sigset_t set;
     sigemptyset(&set);
@@ -226,29 +228,42 @@ static sigset_t preempt_sigset(void) {
 }
 
 /**
- * coco_preempt_block_signal - 阻塞抢占信号
+ * coco_preempt_block_signal - 阻塞抢占信号（引用计数版）
  *
- * 使用 pthread_sigmask 阻塞 SIGALRM（和 SIGURG），
- * 保护关键区域免受抢占信号中断。
+ * 使用线程局部嵌套计数器实现引用计数的信号阻塞。
+ * 仅在首次进入临界区时调用 pthread_sigmask(SIG_BLOCK)，
+ * 避免嵌套锁场景下信号被过早解除阻塞。
  *
  * @return COCO_OK 成功，COCO_ERROR 失败
  */
 int coco_preempt_block_signal(void) {
-    sigset_t set = preempt_sigset();
-    return pthread_sigmask(SIG_BLOCK, &set, NULL) == 0 ? COCO_OK : COCO_ERROR;
+    if (g_preempt_block_nest++ == 0) {
+        sigset_t set = preempt_sigset();
+        if (pthread_sigmask(SIG_BLOCK, &set, NULL) != 0) {
+            g_preempt_block_nest--;
+            return COCO_ERROR;
+        }
+    }
+    return COCO_OK;
 }
 
 /**
- * coco_preempt_unblock_signal - 解除阻塞抢占信号
+ * coco_preempt_unblock_signal - 解除阻塞抢占信号（引用计数版）
  *
- * 使用 pthread_sigmask 解除阻塞 SIGALRM（和 SIGURG），
- * 恢复抢占信号的正常投递。
+ * 使用线程局部嵌套计数器实现引用计数的信号解除阻塞。
+ * 仅在最后一个嵌套层级退出时调用 pthread_sigmask(SIG_UNBLOCK)，
+ * 确保外层临界区在整个过程中始终受保护。
  *
  * @return COCO_OK 成功，COCO_ERROR 失败
  */
 int coco_preempt_unblock_signal(void) {
-    sigset_t set = preempt_sigset();
-    return pthread_sigmask(SIG_UNBLOCK, &set, NULL) == 0 ? COCO_OK : COCO_ERROR;
+    if (--g_preempt_block_nest == 0) {
+        sigset_t set = preempt_sigset();
+        if (pthread_sigmask(SIG_UNBLOCK, &set, NULL) != 0) {
+            return COCO_ERROR;
+        }
+    }
+    return COCO_OK;
 }
 #else
 int coco_preempt_block_signal(void) { return COCO_OK; }
