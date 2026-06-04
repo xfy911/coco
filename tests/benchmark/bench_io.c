@@ -1,58 +1,68 @@
 /**
- * bench_io.c - I/O 性能基准测试（直接 pipe I/O）
+ * bench_io.c - 协程 I/O 性能基准测试
+ *
+ * 使用 socketpair + coco_read/coco_write 测量实际协程 I/O 吞吐量。
  */
 
-#include "../src/coco_internal.h"
+#include "coco.h"
 #include <stdio.h>
-#include <stdlib.h>
+#include <assert.h>
 #include <time.h>
+#include <sys/socket.h>
 #include <unistd.h>
-#include <string.h>
 
-#define OPS_COUNT 100000
-#define BUF_SIZE 64
+#define N_CORO 4
+#define N_MSG 10000
+#define MSG_SIZE 64
+
+static int sv[2]; /* socketpair */
+
+static void writer(void *arg) {
+    (void)arg;
+    char buf[MSG_SIZE] = "hello";
+    for (int i = 0; i < N_MSG; i++) {
+        int n = coco_write(sv[0], buf, MSG_SIZE);
+        assert(n == MSG_SIZE);
+    }
+}
+
+static void reader(void *arg) {
+    (void)arg;
+    char buf[MSG_SIZE];
+    for (int i = 0; i < N_MSG; i++) {
+        int n = coco_read(sv[1], buf, MSG_SIZE);
+        assert(n == MSG_SIZE);
+    }
+}
 
 int main(void) {
-    printf("=== I/O Benchmark ===\n");
-    printf("Iterations: %d\n", OPS_COUNT);
-
-    int pipefd[2];
-    if (pipe(pipefd) < 0) {
-        perror("pipe");
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        perror("socketpair");
         return 1;
     }
-
-    char write_buf[BUF_SIZE];
-    char read_buf[BUF_SIZE];
-    memset(write_buf, 'x', BUF_SIZE);
 
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    for (int i = 0; i < OPS_COUNT; i++) {
-        if (write(pipefd[1], write_buf, BUF_SIZE) != BUF_SIZE) {
-            perror("write");
-            break;
-        }
-        if (read(pipefd[0], read_buf, BUF_SIZE) != BUF_SIZE) {
-            perror("read");
-            break;
-        }
+    coco_sched_t *sched = coco_sched_create();
+    for (int i = 0; i < N_CORO; i++) {
+        coco_create(sched, writer, NULL, 0);
+        coco_create(sched, reader, NULL, 0);
     }
+    coco_sched_run(sched);
+    coco_sched_destroy(sched);
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-
-    close(pipefd[0]);
-    close(pipefd[1]);
-
     double elapsed = (end.tv_sec - start.tv_sec) +
                      (end.tv_nsec - start.tv_nsec) / 1e9;
-    double ops_per_sec = OPS_COUNT / elapsed;
 
-    printf("Results:\n");
-    printf("  Total time: %.3f s\n", elapsed);
-    printf("  Ops/sec: %.0f\n", ops_per_sec);
-    printf("  Latency: %.0f ns/op\n", elapsed * 1e9 / OPS_COUNT);
+    double total_bytes = 2.0 * N_CORO * N_MSG * MSG_SIZE;
+    double throughput_mbps = (total_bytes / elapsed) / (1024 * 1024);
 
+    printf("bench_io: %.3fs  %.1f MB/s  %d coroutine I/O pairs\n",
+           elapsed, throughput_mbps, N_CORO);
+
+    close(sv[0]);
+    close(sv[1]);
     return 0;
 }
