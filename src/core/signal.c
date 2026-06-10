@@ -30,6 +30,9 @@ static _Thread_local coco_stack_map_t *g_current_stack_map = NULL;
 /* 替代信号栈（线程局部，支持多线程场景） */
 static _Thread_local stack_t g_sigaltstack;
 
+/* 信号初始化引用计数（线程局部）：同一线程多个调度器共享 handler */
+static _Thread_local int g_signal_ref_count = 0;
+
 /**
  * find_coro_by_stack - 从 fault address 反查协程
  *
@@ -37,14 +40,18 @@ static _Thread_local stack_t g_sigaltstack;
  * @param fault_addr 触发 SIGSEGV 的地址
  * @return 协程指针，未找到返回 NULL
  */
+/* 前向声明：使用 stack_common.c 中缓存的页大小 */
+extern size_t get_page_size(void);
+
 static coco_coro_t *find_coro_by_stack(coco_sched_t *sched, void *fault_addr) {
     if (!sched || !fault_addr) {
         return NULL;
     }
 
     uintptr_t addr = (uintptr_t)fault_addr;
+    size_t page_size = get_page_size();
 
-    /* 遍历协程池 */
+    /* 遍历协程池：先检查栈范围（常见情况），再检查 guard page */
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
         coco_coro_t *coro = sched->coro_table[i];
         if (!coro || !coro->stack_base) {
@@ -53,16 +60,14 @@ static coco_coro_t *find_coro_by_stack(coco_sched_t *sched, void *fault_addr) {
 
         uintptr_t base = (uintptr_t)coro->stack_base;
         uintptr_t top = (uintptr_t)coro->stack_top;
-        size_t page_size = sysconf(_SC_PAGESIZE);
 
-        /* 检查 fault address 是否在 guard page 范围内 */
-        /* guard page 位于 stack_base 到 stack_base + page_size */
-        if (addr >= base && addr < base + page_size) {
+        /* 先检查是否在栈范围内（常见情况） */
+        if (addr >= base && addr < top) {
             return coro;
         }
 
-        /* 也检查是否在栈范围内（其他栈错误） */
-        if (addr >= base && addr < top) {
+        /* 再检查是否在 guard page 范围内 */
+        if (addr >= base && addr < base + page_size) {
             return coro;
         }
     }
@@ -96,16 +101,20 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
     coco_sched_t *sched = g_overflow_sched;
 
     if (!sched) {
-        /* 无调度器，无法恢复，终止进程 */
-        _exit(139);  /* 128 + 11 (SIGSEGV) */
+        /* 无调度器，无法恢复，输出诊断信息后终止 */
+        const char msg[] = "coco: fatal SIGSEGV (no active scheduler)\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        goto fatal_segv;
     }
 
     /* 反查溢出的协程 */
     coco_coro_t *coro = find_coro_by_stack(sched, fault_addr);
 
     if (!coro) {
-        /* 不是栈溢出，是其他段错误，终止进程 */
-        _exit(139);
+        /* 不是栈溢出，是其他段错误，输出诊断信息后终止 */
+        const char msg[] = "coco: fatal SIGSEGV (not a stack overflow)\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        goto fatal_segv;
     }
 
     /* 检查协程是否可动态增长 */
@@ -165,6 +174,22 @@ static void segv_handler(int sig, siginfo_t *info, void *context) {
 
     /* 恢复到调度器主循环 */
     siglongjmp(g_overflow_jmp, 1);
+
+fatal_segv:
+    /*
+     * 致命段错误：恢复默认 handler 并重新触发信号，
+     * 让系统正常生成 core dump（如果已启用）。
+     */
+    {
+        struct sigaction sa_dfl;
+        memset(&sa_dfl, 0, sizeof(sa_dfl));
+        sa_dfl.sa_handler = SIG_DFL;
+        sigemptyset(&sa_dfl.sa_mask);
+        sigaction(SIGSEGV, &sa_dfl, NULL);
+        raise(SIGSEGV);
+        /* 如果 raise 失败，fallback */
+        _exit(139);
+    }
 }
 
 /**
@@ -178,10 +203,15 @@ int coco_signal_init(coco_sched_t *sched) {
         return COCO_ERROR;
     }
 
+    /* 更新当前活跃调度器（最近 init 的） */
     g_overflow_sched = sched;
-
-    /* 设置线程局部 stack map 指针 (Phase 11) */
     g_current_stack_map = sched->stack_map;
+
+    /* 引用计数：只有首次才安装 handler 和 sigaltstack */
+    if (g_signal_ref_count > 0) {
+        g_signal_ref_count++;
+        return COCO_OK;
+    }
 
     /* 设置替代信号栈（避免在溢出的栈上运行 handler） */
     g_sigaltstack.ss_sp = malloc(SIGNAL_STACK_SIZE);
@@ -193,6 +223,7 @@ int coco_signal_init(coco_sched_t *sched) {
 
     if (sigaltstack(&g_sigaltstack, NULL) != 0) {
         free(g_sigaltstack.ss_sp);
+        g_sigaltstack.ss_sp = NULL;
         return COCO_ERROR;
     }
 
@@ -209,10 +240,15 @@ int coco_signal_init(coco_sched_t *sched) {
 #endif
 
     if (sigaction(SIGSEGV, &sa, NULL) != 0) {
+        stack_t disable = {0};
+        disable.ss_flags = SS_DISABLE;
+        sigaltstack(&disable, NULL);
         free(g_sigaltstack.ss_sp);
+        g_sigaltstack.ss_sp = NULL;
         return COCO_ERROR;
     }
 
+    g_signal_ref_count = 1;
     return COCO_OK;
 }
 
@@ -220,6 +256,15 @@ int coco_signal_init(coco_sched_t *sched) {
  * coco_signal_cleanup - 清理信号处理
  */
 void coco_signal_cleanup(void) {
+    /* 引用计数：只有最后一次才真正卸载 */
+    if (g_signal_ref_count <= 0) {
+        return;
+    }
+    g_signal_ref_count--;
+    if (g_signal_ref_count > 0) {
+        return;
+    }
+
     /* 恢复默认 SIGSEGV handler */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));

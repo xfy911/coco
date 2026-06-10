@@ -19,7 +19,7 @@
 
 /* 线程局部抢占状态 */
 static _Thread_local struct {
-    bool initialized;
+    int ref_count;            /* 引用计数：支持同线程多调度器共享 */
     bool enabled;
     volatile sig_atomic_t preempt_pending;
     volatile sig_atomic_t in_handler;
@@ -79,7 +79,9 @@ void coco_preempt_handler(int sig, siginfo_t *info, void *context) {
  * @return COCO_OK 成功，负数错误码失败
  */
 int coco_preempt_init(void) {
-    if (g_preempt_state.initialized) {
+    /* 引用计数：只有首次才分配资源和安装 handler */
+    if (g_preempt_state.ref_count > 0) {
+        g_preempt_state.ref_count++;
         return COCO_OK;
     }
 
@@ -95,6 +97,7 @@ int coco_preempt_init(void) {
     /* 安装信号栈 */
     if (sigaltstack(&g_preempt_state.preempt_stack, NULL) != 0) {
         free(g_preempt_state.preempt_stack.ss_sp);
+        g_preempt_state.preempt_stack.ss_sp = NULL;
         return COCO_ERROR;
     }
 
@@ -105,10 +108,11 @@ int coco_preempt_init(void) {
         disable.ss_flags = SS_DISABLE;
         sigaltstack(&disable, NULL);
         free(g_preempt_state.preempt_stack.ss_sp);
+        g_preempt_state.preempt_stack.ss_sp = NULL;
         return ret;
     }
 
-    g_preempt_state.initialized = true;
+    g_preempt_state.ref_count = 1;
     g_preempt_state.enabled = false;
     g_preempt_state.preempt_pending = 0;
     g_preempt_state.in_handler = 0;
@@ -120,7 +124,12 @@ int coco_preempt_init(void) {
  * coco_preempt_cleanup - 清理抢占子系统
  */
 void coco_preempt_cleanup(void) {
-    if (!g_preempt_state.initialized) {
+    /* 引用计数：只有最后一次才真正卸载 */
+    if (g_preempt_state.ref_count <= 0) {
+        return;
+    }
+    g_preempt_state.ref_count--;
+    if (g_preempt_state.ref_count > 0) {
         return;
     }
 
@@ -136,8 +145,6 @@ void coco_preempt_cleanup(void) {
         free(g_preempt_state.preempt_stack.ss_sp);
         g_preempt_state.preempt_stack.ss_sp = NULL;
     }
-
-    g_preempt_state.initialized = false;
 }
 
 /**
@@ -148,7 +155,7 @@ void coco_preempt_cleanup(void) {
  * @return COCO_OK 成功，负数错误码失败
  */
 int coco_preempt_arm(void) {
-    if (!g_preempt_state.initialized) {
+    if (g_preempt_state.ref_count <= 0) {
         return COCO_ERROR;
     }
 
@@ -166,7 +173,7 @@ int coco_preempt_arm(void) {
  * @return COCO_OK 成功，负数错误码失败
  */
 int coco_preempt_disarm(void) {
-    if (!g_preempt_state.initialized) {
+    if (g_preempt_state.ref_count <= 0) {
         return COCO_ERROR;
     }
 

@@ -469,3 +469,341 @@ bool coco_channel_mt_is_closed(coco_channel_mt_t *ch) {
 
     return closed;
 }
+
+/* === Select 辅助函数 === */
+
+/* 添加 select_node 到 channel_mt 等待队列尾部 */
+static void enqueue_select_node_mt(coco_select_node_t **head, coco_select_node_t **tail,
+                                   coco_select_node_t *node) {
+    node->next = NULL;
+    if (*tail) {
+        (*tail)->next = node;
+    } else {
+        *head = node;
+    }
+    *tail = node;
+    node->registered = 1;
+}
+
+/* 从等待队列中移除指定 select_node */
+static void remove_select_node_mt(coco_select_node_t **head, coco_select_node_t **tail,
+                                  coco_select_node_t *node) {
+    if (*head == node) {
+        *head = node->next;
+        if (!*head) {
+            *tail = NULL;
+        }
+        node->next = NULL;
+        node->registered = 0;
+        return;
+    }
+    coco_select_node_t *prev = *head;
+    while (prev && prev->next != node) {
+        prev = prev->next;
+    }
+    if (prev) {
+        prev->next = node->next;
+        if (*tail == node) {
+            *tail = prev;
+        }
+        node->next = NULL;
+        node->registered = 0;
+    }
+}
+
+/* 从所有 select 注册的 channel 等待队列中移除协程 */
+static void select_dequeue_all_mt(coco_coro_t *coro) {
+    coco_select_node_t *nodes = coro->select_nodes;
+    for (int i = 0; i < coro->select_case_count; i++) {
+        if (nodes[i].registered) {
+            coco_channel_mt_t *ch = (coco_channel_mt_t *)nodes[i].chan;
+            if (ch) {
+                pthread_mutex_lock(&ch->lock);
+                if (nodes[i].is_send) {
+                    remove_select_node_mt(&ch->send_select_head, &ch->send_select_tail, &nodes[i]);
+                } else {
+                    remove_select_node_mt(&ch->recv_select_head, &ch->recv_select_tail, &nodes[i]);
+                }
+                pthread_mutex_unlock(&ch->lock);
+            }
+            nodes[i].registered = 0;
+        }
+    }
+}
+
+/* select 超时回调参数 */
+typedef struct {
+    coco_sched_t *sched;
+    coco_coro_t *coro;
+    _Atomic bool callback_executed;
+    _Atomic bool callback_done;
+} select_timeout_arg_mt_t;
+
+/* select 超时回调 */
+static void select_timeout_cb_mt(void *arg) {
+    select_timeout_arg_mt_t *ta = (select_timeout_arg_mt_t *)arg;
+    if (atomic_exchange(&ta->callback_executed, true)) {
+        return;
+    }
+    coco_coro_t *coro = ta->coro;
+    if (coro->select_nodes && coro->select_ready_index == -1) {
+        coro->select_ready_index = COCO_SELECT_TIMEOUT;
+        select_dequeue_all_mt(coro);
+        coro->select_timer = NULL;
+        enqueue_ready(ta->sched, coro);
+    }
+    atomic_store(&ta->callback_done, true);
+    free(ta);
+}
+
+/* 取消 select 定时器 */
+static void cancel_select_timer_mt(coco_coro_t *coro) {
+    if (coro->select_timer) {
+        select_timeout_arg_mt_t *ta = (select_timeout_arg_mt_t *)coro->select_timer->arg;
+        if (atomic_exchange(&ta->callback_executed, true)) {
+            while (!atomic_load(&ta->callback_done)) {
+                /* spin wait */
+            }
+        } else {
+            coco_timer_cancel(coro->select_timer);
+            free(ta);
+        }
+        coro->select_timer = NULL;
+    }
+}
+
+/**
+ * coco_channel_mt_select - 多线程 channel select
+ *
+ * @param cases     select case 数组
+ * @param ncases    case 数量
+ * @param timeout_ms 超时时间（0 = 无超时）
+ * @param has_default 是否有 default case
+ * @return 就绪 case 的索引，COCO_SELECT_TIMEOUT，或 COCO_SELECT_DEFAULT
+ */
+int coco_channel_mt_select(coco_select_case_t *cases, int ncases,
+                           uint64_t timeout_ms, int has_default) {
+    if (!cases || ncases <= 0) {
+        return COCO_ERROR_INVALID;
+    }
+
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
+
+    coco_sched_t *sched = g_current_sched;
+    coco_coro_t *coro = g_current_coro;
+
+    /* Phase 1: Non-blocking check with trylock */
+    for (int i = 0; i < ncases; i++) {
+        coco_channel_mt_t *ch = (coco_channel_mt_t *)cases[i].chan;
+        if (!ch) continue;
+
+        if (cases[i].dir == COCO_SELECT_RECV) {
+            if (pthread_mutex_trylock(&ch->lock) == 0) {
+                if (ch->capacity > 0 && ch->count > 0) {
+                    void *val = ch->buffer[ch->head];
+                    ch->head = (ch->head + 1) % ch->capacity;
+                    ch->count--;
+                    *(void **)cases[i].val = val;
+                    cases[i].result = COCO_OK;
+                    /* 尝试唤醒等待的发送者 */
+                    coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
+                    if (send_waiter) {
+                        ch->buffer[ch->tail] = send_waiter->wait_node.value;
+                        ch->tail = (ch->tail + 1) % ch->capacity;
+                        ch->count++;
+                        pthread_mutex_unlock(&ch->lock);
+                        schedule_ready(send_waiter);
+                    } else {
+                        pthread_cond_signal(&ch->send_cond);
+                        pthread_mutex_unlock(&ch->lock);
+                    }
+                    return i;
+                }
+                if (ch->capacity == 0 && ch->send_wait_head) {
+                    coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
+                    if (send_waiter) {
+                        *(void **)cases[i].val = send_waiter->wait_node.value;
+                        pthread_mutex_unlock(&ch->lock);
+                        schedule_ready(send_waiter);
+                        cases[i].result = COCO_OK;
+                        return i;
+                    }
+                }
+                pthread_mutex_unlock(&ch->lock);
+            }
+        } else {
+            if (pthread_mutex_trylock(&ch->lock) == 0) {
+                if (ch->closed) {
+                    cases[i].result = COCO_ERROR_CHANNEL_CLOSED;
+                    pthread_mutex_unlock(&ch->lock);
+                    return i;
+                }
+                if (ch->capacity > 0 && ch->count < ch->capacity) {
+                    ch->buffer[ch->tail] = cases[i].val;
+                    ch->tail = (ch->tail + 1) % ch->capacity;
+                    ch->count++;
+                    cases[i].result = COCO_OK;
+                    /* 尝试唤醒等待的接收者 */
+                    coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
+                    if (recv_waiter) {
+                        recv_waiter->wait_node.value = ch->buffer[ch->head];
+                        ch->head = (ch->head + 1) % ch->capacity;
+                        ch->count--;
+                        pthread_mutex_unlock(&ch->lock);
+                        schedule_ready(recv_waiter);
+                    } else {
+                        pthread_cond_signal(&ch->recv_cond);
+                        pthread_mutex_unlock(&ch->lock);
+                    }
+                    return i;
+                }
+                if (ch->capacity == 0 && ch->recv_wait_head) {
+                    coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
+                    if (recv_waiter) {
+                        recv_waiter->wait_node.value = cases[i].val;
+                        pthread_mutex_unlock(&ch->lock);
+                        schedule_ready(recv_waiter);
+                        cases[i].result = COCO_OK;
+                        return i;
+                    }
+                }
+                pthread_mutex_unlock(&ch->lock);
+            }
+        }
+    }
+
+    /* Default case */
+    if (has_default) {
+        return COCO_SELECT_DEFAULT;
+    }
+
+    /* Phase 2: Register on all channels */
+    coco_select_node_t *nodes = malloc(sizeof(coco_select_node_t) * ncases);
+    if (!nodes) {
+        return COCO_ERROR_NOMEM;
+    }
+
+    if (coro->wait_node.in_use) {
+        free(nodes);
+        return COCO_ERROR;
+    }
+
+    /* 初始化节点 */
+    for (int i = 0; i < ncases; i++) {
+        coco_channel_mt_t *ch = (coco_channel_mt_t *)cases[i].chan;
+        nodes[i].chan = (coco_channel_t *)ch;
+        nodes[i].coro = coro;
+        nodes[i].case_index = i;
+        nodes[i].is_send = (cases[i].dir == COCO_SELECT_SEND);
+        if (nodes[i].is_send) {
+            nodes[i].send_val = cases[i].val;
+        } else {
+            nodes[i].recv_ptr = (void **)cases[i].val;
+        }
+        nodes[i].registered = 0;
+        nodes[i].next = NULL;
+    }
+
+    /* 按 channel 地址排序获取锁，避免死锁 */
+    /* 简单实现：逐个 trylock，失败则释放所有已获取的锁，重试 */
+    int retry = 0;
+    while (retry < 100) {
+        int locked = 0;
+        for (int i = 0; i < ncases; i++) {
+            coco_channel_mt_t *ch = (coco_channel_mt_t *)nodes[i].chan;
+            if (!ch) continue;
+            if (pthread_mutex_trylock(&ch->lock) != 0) {
+                /* 释放已获取的锁 */
+                for (int j = 0; j < i; j++) {
+                    coco_channel_mt_t *prev_ch = (coco_channel_mt_t *)nodes[j].chan;
+                    if (prev_ch) pthread_mutex_unlock(&prev_ch->lock);
+                }
+                locked = 0;
+                break;
+            }
+            locked++;
+        }
+        if (locked > 0 || ncases == 0) {
+            /* 成功获取所有锁 */
+            break;
+        }
+        /* 短暂退让后重试 */
+        retry++;
+        sched_yield();
+    }
+    if (retry >= 100) {
+        /* 获取锁失败，回退到阻塞获取（按固定顺序） */
+        for (int i = 0; i < ncases; i++) {
+            coco_channel_mt_t *ch = (coco_channel_mt_t *)nodes[i].chan;
+            if (ch) pthread_mutex_lock(&ch->lock);
+        }
+    }
+
+    /* 注册到各 channel 的 select 队列 */
+    for (int i = 0; i < ncases; i++) {
+        coco_channel_mt_t *ch = (coco_channel_mt_t *)nodes[i].chan;
+        if (!ch) continue;
+        if (nodes[i].is_send) {
+            if (!ch->closed) {
+                enqueue_select_node_mt(&ch->send_select_head, &ch->send_select_tail, &nodes[i]);
+            }
+        } else {
+            enqueue_select_node_mt(&ch->recv_select_head, &ch->recv_select_tail, &nodes[i]);
+        }
+    }
+
+    /* 释放所有锁 */
+    for (int i = 0; i < ncases; i++) {
+        coco_channel_mt_t *ch = (coco_channel_mt_t *)nodes[i].chan;
+        if (ch) pthread_mutex_unlock(&ch->lock);
+    }
+
+    coro->select_nodes = nodes;
+    coro->select_case_count = ncases;
+    coro->select_ready_index = -1;
+    coro->select_timer = NULL;
+
+    /* 设置超时定时器 */
+    if (timeout_ms > 0) {
+        select_timeout_arg_mt_t *ta = malloc(sizeof(select_timeout_arg_mt_t));
+        if (ta) {
+            ta->sched = sched;
+            ta->coro = coro;
+            atomic_init(&ta->callback_executed, false);
+            atomic_init(&ta->callback_done, false);
+            coro->select_timer = coco_timer_ex(sched, timeout_ms, select_timeout_cb_mt, ta);
+            if (!coro->select_timer) {
+                free(ta);
+            }
+        }
+    }
+
+    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+    coco_yield();
+
+    /* Phase 3: Resume */
+    int ready_index = coro->select_ready_index;
+
+    if (coro->select_timer) {
+        cancel_select_timer_mt(coro);
+    }
+
+    if (ready_index >= 0) {
+        coco_select_node_t *node = &nodes[ready_index];
+        coco_channel_mt_t *ch = (coco_channel_mt_t *)node->chan;
+        if (node->is_send) {
+            cases[ready_index].result = (ch && ch->closed) ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
+        } else {
+            *node->recv_ptr = coro->wait_node.value;
+            cases[ready_index].result = (coro->wait_node.value == NULL && ch && ch->closed)
+                                        ? COCO_ERROR_CHANNEL_CLOSED : COCO_OK;
+        }
+    }
+
+    coro->select_nodes = NULL;
+    coro->select_case_count = 0;
+    coro->select_ready_index = -1;
+    free(nodes);
+
+    return ready_index;
+}

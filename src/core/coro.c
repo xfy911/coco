@@ -636,16 +636,21 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
             new_cap *= 2;
         }
         coco_coro_t **new_table = realloc(sched->coro_table, new_cap * sizeof(coco_coro_t *));
-        if (new_table) {
-            memset(new_table + sched->coro_capacity, 0,
-                   (new_cap - sched->coro_capacity) * sizeof(coco_coro_t *));
-            sched->coro_table = new_table;
-            sched->coro_capacity = new_cap;
+        if (!new_table) {
+            /* realloc 失败：回滚并释放已分配资源 */
+            if (coro->is_exclusive && coro->stack_top) {
+                stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+            }
+            free(coro);
+            /* next_id 已自增，跳过此 ID 不影响正确性 */
+            return NULL;
         }
+        memset(new_table + sched->coro_capacity, 0,
+               (new_cap - sched->coro_capacity) * sizeof(coco_coro_t *));
+        sched->coro_table = new_table;
+        sched->coro_capacity = new_cap;
     }
-    if (coro->id < sched->coro_capacity) {
-        sched->coro_table[coro->id] = coro;
-    }
+    sched->coro_table[coro->id] = coro;
     sched->coro_count++;
 
     enqueue_ready(sched, coro);

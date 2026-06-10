@@ -34,6 +34,12 @@ struct coco_channel_mt {
     /* 条件变量 (用于非协程线程) */
     pthread_cond_t send_cond;
     pthread_cond_t recv_cond;
+
+    /* Select 等待队列 */
+    coco_select_node_t *send_select_head;
+    coco_select_node_t *send_select_tail;
+    coco_select_node_t *recv_select_head;
+    coco_select_node_t *recv_select_tail;
 };
 
 typedef struct coco_channel_mt coco_channel_mt_t;
@@ -56,6 +62,10 @@ int coco_channel_mt_try_recv(coco_channel_mt_t *ch, void **value);
 
 /* 关闭 */
 void coco_channel_mt_close(coco_channel_mt_t *ch);
+
+/* Select API */
+int coco_channel_mt_select(coco_select_case_t *cases, int ncases,
+                           uint64_t timeout_ms, int has_default);
 
 /* 查询 */
 size_t coco_channel_mt_len(coco_channel_mt_t *ch);

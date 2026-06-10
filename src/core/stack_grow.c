@@ -18,6 +18,11 @@
 #include <sys/mman.h>
 #include <stdio.h>  /* for logging */
 
+/* 内部日志宏：可通过外部定义替换为自定义日志系统 */
+#ifndef COCO_LOG_GROW
+#define COCO_LOG_GROW(fmt, ...) fprintf(stderr, "[coco] " fmt "\n", ##__VA_ARGS__)
+#endif
+
 /* Platform-specific headers */
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -197,7 +202,7 @@ coco_grow_info_t coco_grow_stack(
      */
     if (stack_growable && stack_map == NULL) {
         /* 警告但不报错，继续执行保守增长 */
-        fprintf(stderr, "[coco] warning: growing stack without stack_map (coro=%lu)\n",
+        COCO_LOG_GROW("warning: growing stack without stack_map (coro=%lu)",
                 (unsigned long)coro_id);
     }
 
@@ -296,7 +301,7 @@ coco_grow_info_t coco_grow_stack(
     info.result = COCO_GROW_OK;
 
     /* 栈增长日志 */
-    fprintf(stderr, "[coco] stack grow: coro=%lu old_size=%zu new_size=%zu pointers_adjusted=%u\n",
+    COCO_LOG_GROW("stack grow: coro=%lu old_size=%zu new_size=%zu pointers_adjusted=%u",
             (unsigned long)coro_id, info.old_size, info.new_size, info.pointers_adjusted);
 
     // Free old stack
