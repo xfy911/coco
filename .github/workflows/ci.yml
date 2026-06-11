@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        compiler: [gcc, clang]
+        sanitizer: [none, asan, ubsan]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+      
+      - name: Configure
+        run: |
+          if [ "${{ matrix.sanitizer }}" = "asan" ]; then
+            cmake -B build -G Ninja -DCOCO_ENABLE_ASAN=ON -DCOCO_BUILD_TESTS=ON
+          elif [ "${{ matrix.sanitizer }}" = "ubsan" ]; then
+            cmake -B build -G Ninja -DCOCO_ENABLE_UBSAN=ON -DCOCO_BUILD_TESTS=ON
+          else
+            cmake -B build -G Ninja -DCOCO_BUILD_TESTS=ON
+          fi
+        env:
+          CC: ${{ matrix.compiler }}
+      
+      - name: Build
+        run: cmake --build build
+      
+      - name: Test
+        run: cd build && ctest --output-on-failure -j$(nproc)
+  
+  # TSan is run separately due to compatibility issues with coroutine context switching
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+      
+      - name: Configure with TSan
+        run: cmake -B build -G Ninja -DCOCO_ENABLE_TSAN=ON -DCOCO_BUILD_TESTS=ON
+      
+      - name: Build
+        run: cmake --build build
+      
+      - name: Test (excluding TSan-incompatible tests)
+        run: |
+          cd build
+          # Skip tests known to be incompatible with TSan:
+          # - test_ctx_x86_64: TSan modifies registers, breaking ASM context switch tests
+          # - stress_coro_count: TSan incompatible with hot stack mechanism
+          ctest --output-on-failure -j$(nproc) \
+            -E "test_ctx_x86_64|stress_coro_count"
