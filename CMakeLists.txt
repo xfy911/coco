@@ -90,6 +90,7 @@ set(CORE_SOURCES
     src/core/preempt.c
     src/core/hot_stack.c
     src/core/version.c
+    src/core/cls.c
     src/sched/global_sched.c
     src/sched/runq.c
     src/sched/sched.c
@@ -246,6 +247,7 @@ if(COCO_BUILD_TESTS)
         test_long_running
         test_safety
         test_stack_map
+        test_cls
         test_stack_grow
         stress_coro_count
         stress_channel_burst

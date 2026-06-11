@@ -512,6 +512,37 @@ coco_priority_t COCO_API coco_get_priority(coco_coro_t *coro);
 size_t COCO_API coco_get_stack_usage(coco_coro_t *coro);
 /** @} */
 
+/* === Coroutine-Local Storage API === */
+/** @defgroup CLS Coroutine-Local Storage API
+ *  @brief Per-coroutine key-value storage
+ *  @{
+ */
+
+/**
+ * @brief Set a coroutine-local value
+ * @param key Key string (must be persistent/constant)
+ * @param value Value pointer
+ * @param destructor Optional destructor called on cleanup (NULL for none)
+ * @return COCO_OK on success, negative error code on failure
+ */
+int COCO_API coco_cls_set(const char *key, void *value, void (*destructor)(void *));
+
+/**
+ * @brief Get a coroutine-local value
+ * @param key Key string
+ * @return Value pointer, or NULL if not found
+ */
+void *COCO_API coco_cls_get(const char *key);
+
+/**
+ * @brief Delete a coroutine-local value
+ * @param key Key string
+ * @return COCO_OK on success, negative error code on failure
+ */
+int COCO_API coco_cls_delete(const char *key);
+
+/** @} */
+
 /* === Channel API === */
 /** @defgroup Channel Channel API
  *  @brief Inter-coroutine communication via channels

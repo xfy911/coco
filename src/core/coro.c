@@ -8,6 +8,7 @@
 #include "../../include/coco_stack_map.h"
 #include "../sched/global_sched.h"
 #include "stack_pool_multi.h"
+#include "cls.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -235,6 +236,10 @@ void coco_sched_destroy(coco_sched_t *sched) {
             if (coro->stack_backup) {
                 free(coro->stack_backup);
                 coro->stack_backup = NULL;
+            }
+            if (coro->cls_table) {
+                cls_destroy_table(coro->cls_table);
+                coro->cls_table = NULL;
             }
             free(coro);
         }
@@ -595,6 +600,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     coro->stack_backup = NULL;
     coro->stack_backup_size = 0;
     coro->stack_used = 0;
+    coro->cls_table = NULL;
 
     bool request_exclusive = (stack_size != 0 && stack_size >= COCO_STACK_FIXED);
 
@@ -708,6 +714,10 @@ void coco_exit(coco_coro_t *coro, void *result) {
         free(coro->stack_backup);
         coro->stack_backup = NULL;
     }
+    if (coro->cls_table) {
+        cls_destroy_table(coro->cls_table);
+        coro->cls_table = NULL;
+    }
 
     g_current_coro = NULL;
     coco_ctx_switch(&coro->ctx, g_return_ctx);
@@ -791,6 +801,10 @@ void coco_destroy(coco_coro_t *coro) {
     if (coro->stack_backup) {
         free(coro->stack_backup);
         coro->stack_backup = NULL;
+    }
+    if (coro->cls_table) {
+        cls_destroy_table(coro->cls_table);
+        coro->cls_table = NULL;
     }
     free(coro);
 }

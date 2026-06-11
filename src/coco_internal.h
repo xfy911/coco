@@ -179,6 +179,9 @@ struct coco_coro {
     coco_hot_node_t hot_node;
     uint64_t last_run_tick;
     bool is_exclusive;
+
+    /* Coroutine-local storage */
+    struct cls_entry *cls_table;
 };
 
 /* 时间轮结构（前置声明） */
