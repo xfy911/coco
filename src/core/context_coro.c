@@ -10,8 +10,6 @@
 #include <errno.h>
 
 /* 外部全局变量 */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /**
  * coco_coro_set_context - 设置协程的 context

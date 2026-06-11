@@ -7,6 +7,7 @@
 #include "hot_stack.h"
 #include "../../include/coco_stack_map.h"
 #include "../sched/global_sched.h"
+#include "stack_pool_multi.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -221,7 +222,6 @@ void coco_sched_destroy(coco_sched_t *sched) {
             if (coro->is_exclusive && coro->stack_base) {
                 if (coro->stack_pool) {
                     /* MT 模式：栈来自 stack_pool_multi */
-                    extern void stack_pool_multi_free(void *pool, void *stack_top, size_t size);
                     stack_pool_multi_free(coro->stack_pool, coro->stack_top, coro->stack_size);
                 } else {
                     if (coro->stack_from_pool && sched->stack_pool) {
@@ -734,12 +734,10 @@ int coco_yield(void) {
 
     if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_RUNNING) {
         /* 检查是否在多线程模式下 */
-        extern coco_global_sched_t *coco_global_get(void);
         coco_global_sched_t *gs = coco_global_get();
 
         if (gs && gs->processor_count > 0) {
             /* 多线程模式：放入全局队列 */
-            extern int coco_global_runq_put(struct coco_coro *g);
             coco_global_runq_put(coro);
         } else {
             /* 单线程模式：放入本地队列 */
@@ -779,7 +777,6 @@ void coco_destroy(coco_coro_t *coro) {
     if (coro->is_exclusive && coro->stack_base) {
         if (coro->stack_pool) {
             /* MT 模式：栈来自 stack_pool_multi */
-            extern void stack_pool_multi_free(void *pool, void *stack_top, size_t size);
             stack_pool_multi_free(coro->stack_pool, coro->stack_top, coro->stack_size);
         } else {
             coco_sched_t *sched = g_current_sched;

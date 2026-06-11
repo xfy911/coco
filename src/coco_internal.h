@@ -299,6 +299,20 @@ void coco_ctx_switch(coco_ctx_t *current, coco_ctx_t *target);
 /* 线程局部返回上下文 (ST: &sched->main_ctx, MT: &p->m->ctx) */
 extern _Thread_local coco_ctx_t *g_return_ctx;
 
+/* 线程局部调度器和协程 (定义在 coro.c) */
+extern _Thread_local coco_sched_t *g_current_sched;
+extern _Thread_local coco_coro_t *g_current_coro;
+
+/* 协程入口包装函数 (定义在 coro.c) */
+void coro_entry_wrapper(void *arg);
+
+/* Safety mode (定义在 safety.c) */
+extern coco_safety_mode_t g_safety_mode;
+
+/* 抢占信号阻塞 API */
+int coco_preempt_block_signal(void);
+int coco_preempt_unblock_signal(void);
+
 /* 协程上下文检查宏 */
 #define ENSURE_IN_CORO_RET(retval) do { \
     if (!g_current_coro) return (retval); \

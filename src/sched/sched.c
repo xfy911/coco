@@ -22,8 +22,6 @@
 #define STEAL_ATTEMPTS_MAX 6
 #define STEAL_BACKOFF_THRESHOLD 3  /* 连续失败次数超过此值则退避 */
 
-extern int coco_preempt_block_signal(void);
-extern int coco_preempt_unblock_signal(void);
 
 /* 线程局部窃取退避计数器 */
 static _Thread_local uint32_t tl_steal_fail_count = 0;

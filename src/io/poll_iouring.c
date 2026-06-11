@@ -20,8 +20,6 @@
 #include <sys/types.h>
 
 /* 外部全局变量（TLS） */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /* io_uring 配置 */
 #define IOURING_ENTRIES     256   /* 默认队列深度 */

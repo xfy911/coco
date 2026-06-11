@@ -22,8 +22,6 @@
 #include <string.h>
 
 /* 外部全局变量（TLS） */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /* Winsock 初始化引用计数 */
 static LONG g_ws2_init_count = 0;

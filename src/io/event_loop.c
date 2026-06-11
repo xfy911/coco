@@ -18,8 +18,6 @@
 #endif
 
 /* 外部全局变量（TLS） */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /* === 平台无关 I/O 辅助 === */
 

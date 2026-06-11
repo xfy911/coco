@@ -14,8 +14,6 @@
 #include "../core/hot_stack.h"
 #include <string.h>
 
-extern int coco_preempt_block_signal(void);
-extern int coco_preempt_unblock_signal(void);
 
 /**
  * 本地运行队列入队
@@ -158,7 +156,6 @@ int runq_push_overflow(coco_processor_t *p) {
         return -1;
     }
 
-    extern _Thread_local coco_sched_t *g_current_sched;
     coco_sched_t *from = g_current_sched;
 
     uint32_t push = p->local_runq_size / 2;

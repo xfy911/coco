@@ -13,11 +13,7 @@
 #include <stdbool.h>
 
 /* 外部全局变量（TLS，在 coro.c 中定义） */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
-extern int coco_preempt_block_signal(void);
-extern int coco_preempt_unblock_signal(void);
 
 /* Channel 结构 */
 struct coco_channel {

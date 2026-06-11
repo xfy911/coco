@@ -24,8 +24,6 @@
 #endif
 
 /* 外部全局变量 */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /**
  * 创建 FD 信息表

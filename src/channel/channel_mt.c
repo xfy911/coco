@@ -12,11 +12,7 @@
 #include <errno.h>
 
 /* 外部全局变量 */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
-extern int coco_preempt_block_signal(void);
-extern int coco_preempt_unblock_signal(void);
 
 /* 从 select 等待队列头部取出 select_node */
 static coco_select_node_t *dequeue_select_node_mt(coco_select_node_t **head,

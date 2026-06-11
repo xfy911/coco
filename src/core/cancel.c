@@ -7,8 +7,6 @@
 #include <stdlib.h>
 
 /* 外部全局变量（在 coro.c 中定义，使用 TLS） */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /**
  * coco_cancel - 取消协程

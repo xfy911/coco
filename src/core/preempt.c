@@ -33,8 +33,6 @@ int coco_preempt_platform_arm(uint64_t interval_ms);
 int coco_preempt_platform_disarm(void);
 
 /* 内部 API 声明 */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /**
  * coco_preempt_handler - 抢占信号处理函数

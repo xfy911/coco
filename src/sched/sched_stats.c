@@ -13,7 +13,6 @@ static _Atomic uint64_t g_coro_total_created = 0;
 static _Atomic uint64_t g_coro_current_alive = 0;
 
 /* 外部声明 - 在 coro.c 中定义 */
-extern _Thread_local coco_sched_t *g_current_sched;
 
 /* 更新协程创建统计 */
 void coco_stats_coro_created(void) {

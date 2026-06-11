@@ -14,10 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 
-extern int coco_preempt_block_signal(void);
-extern int coco_preempt_unblock_signal(void);
 extern void free_stack_mmap(void *stack_top, size_t size);
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /* 全局调度器实例 */
 static coco_global_sched_t *g_global_sched = NULL;
@@ -382,7 +379,6 @@ static void *worker_loop(void *arg) {
     coco_global_sched_t *gs = coco_global_get();
 
     /* Thread-local state for worker threads */
-    extern _Thread_local coco_sched_t *g_current_sched;
 
     /* Set g_current_sched to main_sched for coco_yield/coco_read etc. */
     g_current_sched = gs->main_sched;

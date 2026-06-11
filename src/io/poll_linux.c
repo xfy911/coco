@@ -20,8 +20,6 @@
 #include <poll.h>
 
 /* 外部全局变量（TLS） */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern _Thread_local coco_coro_t *g_current_coro;
 
 /* io_uring 后端内部函数声明 */
 #ifdef __linux__

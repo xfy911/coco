@@ -12,11 +12,8 @@
 #include <stdatomic.h>
 
 /* 外部声明 - 在 coro.c 中定义 */
-extern _Thread_local coco_sched_t *g_current_sched;
-extern void coro_entry_wrapper(void *arg);
 
 /* 外部声明 - 在 safety.c 中定义 */
-extern coco_safety_mode_t g_safety_mode;
 
 /* 选择最佳 P（负载最轻的处理器） */
 static int select_best_p(void) {
