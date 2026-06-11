@@ -237,10 +237,6 @@ int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
     return n;
 }
 
-/* === 批量 I/O API (kqueue 不支持) === */
-
-COCO_BATCH_IO_STUBS
-
 /* === I/O 配置 API === */
 
 int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options) {

@@ -478,9 +478,7 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
     return COCO_ERROR;
 }
 
-/* === 批量 I/O API (WSAPoll 不支持) === */
-
-COCO_BATCH_IO_STUBS
+/* === 批量 I/O API === */
 
 /* === I/O 配置 API === */
 
