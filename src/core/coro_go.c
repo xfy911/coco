@@ -15,7 +15,11 @@
 
 /* 外部声明 - 在 safety.c 中定义 */
 
-/* 选择最佳 P（负载最轻的处理器） */
+/* 选择最佳 P（负载最轻的处理器）
+ *
+ * 注意: gs->processors 数组在 coco_global_sched_start() 初始化后不再修改，
+ * 因此无需加锁即可遍历。processor_count 同样在启动后保持不变。
+ */
 static int select_best_p(void) {
     coco_global_sched_t *gs = coco_global_get();
     if (!gs || gs->processor_count == 0) {
