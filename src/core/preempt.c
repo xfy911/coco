@@ -185,6 +185,7 @@ int coco_preempt_disarm(void) {
  * coco_preempt_enable - 启用当前协程的抢占
  */
 void coco_preempt_enable(void) {
+    ENSURE_IN_CORO_VOID();
     g_preempt_state.enabled = true;
 }
 
@@ -194,6 +195,7 @@ void coco_preempt_enable(void) {
  * 用于栈增长等关键区域。
  */
 void coco_preempt_disable(void) {
+    ENSURE_IN_CORO_VOID();
     g_preempt_state.enabled = false;
 }
 
@@ -213,6 +215,7 @@ int coco_preempt_is_pending(void) {
  * 协作式抢占点。
  */
 void coco_preempt_checkpoint(void) {
+    ENSURE_IN_CORO_VOID();
     if (g_preempt_state.preempt_pending && g_preempt_state.enabled) {
         g_preempt_state.preempt_pending = 0;
         coco_yield();

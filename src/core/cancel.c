@@ -60,9 +60,6 @@ int coco_cancel(coco_coro_t *coro) {
  * 协程应在阻塞操作后调用此函数检查取消状态。
  */
 int coco_cancelled(void) {
-    coco_coro_t *coro = g_current_coro;
-    if (!coro) {
-        return 0;
-    }
-    return coro->cancelled;
+    ENSURE_IN_CORO_RET(0);
+    return g_current_coro->cancelled;
 }
