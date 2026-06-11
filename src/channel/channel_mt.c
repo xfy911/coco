@@ -15,6 +15,29 @@
 extern _Thread_local coco_sched_t *g_current_sched;
 extern _Thread_local coco_coro_t *g_current_coro;
 
+extern int coco_preempt_block_signal(void);
+extern int coco_preempt_unblock_signal(void);
+
+/* 从 select 等待队列头部取出 select_node */
+static coco_select_node_t *dequeue_select_node_mt(coco_select_node_t **head,
+                                                   coco_select_node_t **tail) {
+    coco_select_node_t *node = *head;
+    if (!node) {
+        return NULL;
+    }
+    *head = node->next;
+    if (!*head) {
+        *tail = NULL;
+    }
+    node->next = NULL;
+    node->registered = 0;
+    return node;
+}
+
+/* 前向声明：select 辅助函数在文件后面定义 */
+static void select_dequeue_all_mt(coco_coro_t *coro);
+static void cancel_select_timer_mt(coco_coro_t *coro);
+
 /**
  * coco_channel_mt_create - 创建多线程 channel
  */
@@ -67,13 +90,45 @@ void coco_channel_mt_destroy(coco_channel_mt_t *ch) {
         return;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
+
+    /* 清理 send_select_head */
+    while (ch->send_select_head) {
+        coco_select_node_t *node = dequeue_select_node_mt(&ch->send_select_head, &ch->send_select_tail);
+        if (node && node->coro) {
+            node->chan = NULL;
+            coco_coro_t *sel_coro = node->coro;
+            if (sel_coro->select_ready_index == -1) {
+                sel_coro->select_ready_index = node->case_index;
+                select_dequeue_all_mt(sel_coro);
+                cancel_select_timer_mt(sel_coro);
+                schedule_ready(sel_coro);
+            }
+        }
+    }
+
+    /* 清理 recv_select_head */
+    while (ch->recv_select_head) {
+        coco_select_node_t *node = dequeue_select_node_mt(&ch->recv_select_head, &ch->recv_select_tail);
+        if (node && node->coro) {
+            node->chan = NULL;
+            coco_coro_t *sel_coro = node->coro;
+            if (sel_coro->select_ready_index == -1) {
+                sel_coro->select_ready_index = node->case_index;
+                select_dequeue_all_mt(sel_coro);
+                cancel_select_timer_mt(sel_coro);
+                schedule_ready(sel_coro);
+            }
+        }
+    }
 
     /* 唤醒所有等待者 */
     while (ch->recv_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
         if (coro) {
             coro->wait_node.value = NULL;
+            schedule_ready(coro);
         }
     }
 
@@ -81,6 +136,7 @@ void coco_channel_mt_destroy(coco_channel_mt_t *ch) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (coro) {
             coro->wait_node.value = NULL;
+            schedule_ready(coro);
         }
     }
 
@@ -89,6 +145,7 @@ void coco_channel_mt_destroy(coco_channel_mt_t *ch) {
     }
 
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     pthread_cond_destroy(&ch->recv_cond);
     pthread_cond_destroy(&ch->send_cond);
@@ -104,10 +161,12 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
         return COCO_ERROR;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     if (ch->closed) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -116,6 +175,7 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
     if (recv_waiter) {
         recv_waiter->wait_node.value = value;
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         /* 唤醒接收者 */
         schedule_ready(recv_waiter);
         return COCO_OK;
@@ -128,6 +188,7 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
         ch->count++;
         pthread_cond_signal(&ch->recv_cond);
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_OK;
     }
 
@@ -135,6 +196,7 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
     coco_coro_t *coro = g_current_coro;
     if (!coro || coro->wait_node.in_use) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR;
     }
 
@@ -142,20 +204,25 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
     enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro, ch);
     atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     coco_yield();
 
     /* 恢复后检查 */
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
     if (coro->cancelled) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CANCELLED;
     }
     if (ch->closed) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     return COCO_OK;
 }
@@ -168,10 +235,12 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
         return COCO_ERROR;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     if (ch->closed && ch->count == 0 && !ch->send_wait_head) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -188,12 +257,14 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
             ch->tail = (ch->tail + 1) % ch->capacity;
             ch->count++;
             pthread_mutex_unlock(&ch->lock);
+            coco_preempt_unblock_signal();
             schedule_ready(send_waiter);
             return COCO_OK;
         }
 
         pthread_cond_signal(&ch->send_cond);
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_OK;
     }
 
@@ -202,6 +273,7 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
     if (send_waiter) {
         *value = send_waiter->wait_node.value;
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         schedule_ready(send_waiter);
         return COCO_OK;
     }
@@ -210,6 +282,7 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
     coco_coro_t *coro = g_current_coro;
     if (!coro || coro->wait_node.in_use) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR;
     }
 
@@ -217,21 +290,26 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
     enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro, ch);
     atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     coco_yield();
 
     /* 恢复后获取值 */
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
     if (coro->cancelled) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CANCELLED;
     }
     if (ch->closed && !coro->wait_node.value) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
     *value = coro->wait_node.value;
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     return COCO_OK;
 }
@@ -244,6 +322,7 @@ int coco_channel_mt_send_thread(coco_channel_mt_t *ch, void *value) {
         return COCO_ERROR;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     while (!ch->closed) {
@@ -252,6 +331,7 @@ int coco_channel_mt_send_thread(coco_channel_mt_t *ch, void *value) {
         if (recv_waiter) {
             recv_waiter->wait_node.value = value;
             pthread_mutex_unlock(&ch->lock);
+            coco_preempt_unblock_signal();
             schedule_ready(recv_waiter);
             return COCO_OK;
         }
@@ -263,6 +343,7 @@ int coco_channel_mt_send_thread(coco_channel_mt_t *ch, void *value) {
             ch->count++;
             pthread_cond_signal(&ch->recv_cond);
             pthread_mutex_unlock(&ch->lock);
+            coco_preempt_unblock_signal();
             return COCO_OK;
         }
 
@@ -271,6 +352,7 @@ int coco_channel_mt_send_thread(coco_channel_mt_t *ch, void *value) {
     }
 
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
     return COCO_ERROR_CHANNEL_CLOSED;
 }
 
@@ -282,6 +364,7 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
         return COCO_ERROR;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     while (!ch->closed || ch->count > 0 || ch->send_wait_head) {
@@ -297,12 +380,14 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
                 ch->tail = (ch->tail + 1) % ch->capacity;
                 ch->count++;
                 pthread_mutex_unlock(&ch->lock);
+                coco_preempt_unblock_signal();
                 schedule_ready(send_waiter);
                 return COCO_OK;
             }
 
             pthread_cond_signal(&ch->send_cond);
             pthread_mutex_unlock(&ch->lock);
+            coco_preempt_unblock_signal();
             return COCO_OK;
         }
 
@@ -311,6 +396,7 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
         if (send_waiter) {
             *value = send_waiter->wait_node.value;
             pthread_mutex_unlock(&ch->lock);
+            coco_preempt_unblock_signal();
             schedule_ready(send_waiter);
             return COCO_OK;
         }
@@ -320,6 +406,7 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
     }
 
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
     return COCO_ERROR_CHANNEL_CLOSED;
 }
 
@@ -331,10 +418,12 @@ int coco_channel_mt_try_send(coco_channel_mt_t *ch, void *value) {
         return COCO_ERROR;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     if (ch->closed) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
@@ -345,6 +434,7 @@ int coco_channel_mt_try_send(coco_channel_mt_t *ch, void *value) {
         ch->count++;
         pthread_cond_signal(&ch->recv_cond);
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_OK;
     }
 
@@ -353,11 +443,13 @@ int coco_channel_mt_try_send(coco_channel_mt_t *ch, void *value) {
     if (recv_waiter) {
         recv_waiter->wait_node.value = value;
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         schedule_ready(recv_waiter);
         return COCO_OK;
     }
 
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
     return COCO_ERROR_WOULD_BLOCK;
 }
 
@@ -369,6 +461,7 @@ int coco_channel_mt_try_recv(coco_channel_mt_t *ch, void **value) {
         return COCO_ERROR;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     /* 有数据则接收 */
@@ -378,6 +471,7 @@ int coco_channel_mt_try_recv(coco_channel_mt_t *ch, void **value) {
         ch->count--;
         pthread_cond_signal(&ch->send_cond);
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_OK;
     }
 
@@ -386,16 +480,19 @@ int coco_channel_mt_try_recv(coco_channel_mt_t *ch, void **value) {
     if (send_waiter) {
         *value = send_waiter->wait_node.value;
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         schedule_ready(send_waiter);
         return COCO_OK;
     }
 
     if (ch->closed) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
     return COCO_ERROR_WOULD_BLOCK;
 }
 
@@ -407,10 +504,12 @@ void coco_channel_mt_close(coco_channel_mt_t *ch) {
         return;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     if (ch->closed) {
         pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
         return;
     }
 
@@ -438,6 +537,7 @@ void coco_channel_mt_close(coco_channel_mt_t *ch) {
     pthread_cond_broadcast(&ch->recv_cond);
 
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 }
 
 /**
@@ -448,9 +548,11 @@ size_t coco_channel_mt_len(coco_channel_mt_t *ch) {
         return 0;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
     size_t len = ch->count;
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     return len;
 }
@@ -463,9 +565,11 @@ bool coco_channel_mt_is_closed(coco_channel_mt_t *ch) {
         return true;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
     bool closed = ch->closed != 0;
     pthread_mutex_unlock(&ch->lock);
+    coco_preempt_unblock_signal();
 
     return closed;
 }
@@ -514,6 +618,7 @@ static void remove_select_node_mt(coco_select_node_t **head, coco_select_node_t 
 /* 从所有 select 注册的 channel 等待队列中移除协程 */
 static void select_dequeue_all_mt(coco_coro_t *coro) {
     coco_select_node_t *nodes = coro->select_nodes;
+    coco_preempt_block_signal();
     for (int i = 0; i < coro->select_case_count; i++) {
         if (nodes[i].registered) {
             coco_channel_mt_t *ch = (coco_channel_mt_t *)nodes[i].chan;
@@ -529,6 +634,7 @@ static void select_dequeue_all_mt(coco_coro_t *coro) {
             nodes[i].registered = 0;
         }
     }
+    coco_preempt_unblock_signal();
 }
 
 /* select 超时回调参数 */
