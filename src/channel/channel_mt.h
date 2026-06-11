@@ -14,7 +14,7 @@
 /* 多线程 Channel 结构 */
 struct coco_channel_mt {
     size_t capacity;          /* 缓冲区大小（0 = 无缓冲） */
-    int closed;               /* 是否已关闭 */
+    _Atomic int closed;               /* 是否已关闭 (atomic for thread safety) */
 
     /* 互斥锁保护 */
     pthread_mutex_t lock;
