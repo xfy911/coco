@@ -132,6 +132,8 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
         coro->stack_base = (void *)((uintptr_t)stack_top - actual_stack_size - 4096);
         coro->stack_size = actual_stack_size;
         coro->stack_pool = alloc_pool;
+        coro->is_exclusive = true;
+        coro->stack_from_pool = true;
         coro->entry = entry;
         coro->arg = arg;
         coro->id = atomic_fetch_add(&gs->next_coro_id, 1);

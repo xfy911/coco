@@ -219,10 +219,16 @@ void coco_sched_destroy(coco_sched_t *sched) {
 
             /* 释放栈 */
             if (coro->is_exclusive && coro->stack_base) {
-                if (coro->stack_from_pool && sched->stack_pool) {
-                    stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+                if (coro->stack_pool) {
+                    /* MT 模式：栈来自 stack_pool_multi */
+                    extern void stack_pool_multi_free(void *pool, void *stack_top, size_t size);
+                    stack_pool_multi_free(coro->stack_pool, coro->stack_top, coro->stack_size);
                 } else {
-                    coco_stack_free(coro->stack_top, coro->stack_size);
+                    if (coro->stack_from_pool && sched->stack_pool) {
+                        stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+                    } else {
+                        coco_stack_free(coro->stack_top, coro->stack_size);
+                    }
                 }
                 coro->stack_base = NULL;
             }
@@ -771,11 +777,17 @@ void coco_destroy(coco_coro_t *coro) {
     coco_select_cleanup(coro);
 
     if (coro->is_exclusive && coro->stack_base) {
-        coco_sched_t *sched = g_current_sched;
-        if (coro->stack_from_pool && sched && sched->stack_pool) {
-            stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+        if (coro->stack_pool) {
+            /* MT 模式：栈来自 stack_pool_multi */
+            extern void stack_pool_multi_free(void *pool, void *stack_top, size_t size);
+            stack_pool_multi_free(coro->stack_pool, coro->stack_top, coro->stack_size);
         } else {
-            coco_stack_free(coro->stack_top, coro->stack_size);
+            coco_sched_t *sched = g_current_sched;
+            if (coro->stack_from_pool && sched && sched->stack_pool) {
+                stack_pool_free(sched->stack_pool, coro->stack_top, coro->stack_size);
+            } else {
+                coco_stack_free(coro->stack_top, coro->stack_size);
+            }
         }
         coro->stack_base = NULL;
     }
