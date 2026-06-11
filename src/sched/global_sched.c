@@ -364,10 +364,23 @@ static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
     pthread_mutex_unlock(&p->local_runq_lock);
     (void) coco_preempt_unblock_signal();
 
-    /* 定期负载均衡 */
+    /* 自适应负载均衡: 当队列深度差异超过阈值时触发 */
     static _Thread_local int balance_counter = 0;
-    if (++balance_counter % 100 == 0) {
-        schedule_balanced(gs);
+    if (++balance_counter % 50 == 0) {
+        uint32_t min_size = UINT32_MAX;
+        uint32_t max_size = 0;
+        for (uint32_t i = 0; i < gs->processor_count; i++) {
+            coco_processor_t *proc = gs->processors[i];
+            if (proc) {
+                uint32_t size = atomic_load(&proc->local_runq_size);
+                if (size < min_size) min_size = size;
+                if (size > max_size) max_size = size;
+            }
+        }
+        /* 当最大队列比最小队列多 8 个协程时触发均衡 */
+        if (max_size - min_size > 8) {
+            schedule_balanced(gs);
+        }
     }
 }
 
