@@ -58,10 +58,6 @@ int coco_poll_init(coco_sched_t *sched) {
         return COCO_ERROR;
     }
 
-    /* 初始化配置 */
-    sched->poll_config.backend_forced = false;
-    sched->poll_config.forced_backend = COCO_IO_BACKEND_AUTO;
-
     /* 检查是否强制选择后端 */
     if (sched->poll_config.backend_forced) {
         if (sched->poll_config.forced_backend == COCO_IO_BACKEND_IOURING) {
