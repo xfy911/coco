@@ -91,6 +91,8 @@ set(CORE_SOURCES
     src/core/hot_stack.c
     src/core/version.c
     src/core/cls.c
+    src/core/trace.c
+    src/core/debug.c
     src/sched/global_sched.c
     src/sched/runq.c
     src/sched/sched.c
@@ -178,15 +180,29 @@ elseif(PLATFORM STREQUAL "macos")
     endif()
 endif()
 
-# 创建库
-add_library(coco STATIC
-    ${CORE_SOURCES}
-    ${PLATFORM_SOURCES}
-    ${TIMER_SOURCES}
-    ${CHANNEL_SOURCES}
-    ${IO_SOURCES}
-    ${PLATFORM_ASM}
-)
+# Build shared library option
+option(COCO_BUILD_SHARED "Build shared library" OFF)
+
+if(COCO_BUILD_SHARED)
+    add_library(coco SHARED
+        ${CORE_SOURCES}
+        ${PLATFORM_SOURCES}
+        ${TIMER_SOURCES}
+        ${CHANNEL_SOURCES}
+        ${IO_SOURCES}
+        ${PLATFORM_ASM}
+    )
+    target_compile_definitions(coco PUBLIC COCO_BUILD_SHARED)
+else()
+    add_library(coco STATIC
+        ${CORE_SOURCES}
+        ${PLATFORM_SOURCES}
+        ${TIMER_SOURCES}
+        ${CHANNEL_SOURCES}
+        ${IO_SOURCES}
+        ${PLATFORM_ASM}
+    )
+endif()
 
 target_include_directories(coco PUBLIC include)
 target_include_directories(coco PRIVATE src)
@@ -264,6 +280,8 @@ if(COCO_BUILD_TESTS)
         test_safety
         test_stack_map
         test_cls
+        test_trace
+        test_debug
         test_stack_grow
         stress_coro_count
         stress_channel_burst
@@ -404,3 +422,9 @@ install(FILES include/coco_safety.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     OPTIONAL
 )
+
+# pkg-config file
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/coco.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/coco.pc @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/coco.pc
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

@@ -40,6 +40,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <sys/types.h>
 
 #ifdef __cplusplus
@@ -540,6 +541,57 @@ void *COCO_API coco_cls_get(const char *key);
  * @return COCO_OK on success, negative error code on failure
  */
 int COCO_API coco_cls_delete(const char *key);
+
+/** @} */
+
+/* === Tracing API === */
+/** @defgroup Tracing Tracing API
+ *  @brief Coroutine lifecycle tracing for debugging and profiling
+ *  @{
+ */
+
+/** Tracing event types */
+typedef enum {
+    COCO_TRACE_CORO_CREATE,   /**\u003c Coroutine created */
+    COCO_TRACE_CORO_READY,    /**\u003c Coroutine became ready */
+    COCO_TRACE_CORO_RUN,      /**\u003c Coroutine started running */
+    COCO_TRACE_CORO_WAIT,     /**\u003c Coroutine started waiting */
+    COCO_TRACE_CORO_DONE,     /**\u003c Coroutine finished */
+    COCO_TRACE_CORO_DESTROY,  /**\u003c Coroutine destroyed */
+} coco_trace_event_t;
+
+/** Tracing information structure */
+typedef struct {
+    coco_trace_event_t event;    /**\u003c Event type */
+    uint64_t coro_id;            /**\u003c Coroutine ID */
+    coco_state_t state;          /**\u003c Current state */
+    uint64_t timestamp_ns;       /**\u003c Timestamp in nanoseconds */
+} coco_trace_info_t;
+
+/** Tracing callback function type */
+typedef void (*coco_trace_cb)(const coco_trace_info_t *info, void *user_data);
+
+/**
+ * @brief Set tracing callback
+ * @param cb Callback function (NULL to disable)
+ * @param user_data User data passed to callback
+ */
+void COCO_API coco_trace_set_callback(coco_trace_cb cb, void *user_data);
+
+/** @} */
+
+/* === Debug API === */
+/** @defgroup Debug Debug API
+ *  @brief Debugging and introspection utilities
+ *  @{
+ */
+
+/**
+ * @brief Dump scheduler state to file
+ * @param sched Scheduler pointer
+ * @param fp Output file (NULL for stderr)
+ */
+void COCO_API coco_debug_dump_scheduler(coco_sched_t *sched, FILE *fp);
 
 /** @} */
 

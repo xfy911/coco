@@ -9,6 +9,7 @@
 #include "../sched/global_sched.h"
 #include "stack_pool_multi.h"
 #include "cls.h"
+#include "trace.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -100,6 +101,7 @@ void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
 
     /* 设置位图对应位 */
     sched->ready_bitmap |= (1U << prio);
+    trace_event(COCO_TRACE_CORO_READY, coro);
 }
 
 /* === 调度器 API === */
@@ -216,6 +218,7 @@ void coco_sched_destroy(coco_sched_t *sched) {
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
         coco_coro_t *coro = sched->coro_table[i];
         if (coro) {
+            trace_event(COCO_TRACE_CORO_DESTROY, coro);
             /* 清理 select 状态 */
             coco_select_cleanup(coro);
 
@@ -368,6 +371,7 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     g_current_coro = coro;
     sched->current = coro;
     atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);
+    trace_event(COCO_TRACE_CORO_RUN, coro);
 
     sched->sched_tick++;
     coro->last_run_tick = sched->sched_tick;
@@ -477,9 +481,11 @@ static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
             break;
         case COCO_STATE_WAITING:
             /* 协程等待 I/O 或 channel */
+            trace_event(COCO_TRACE_CORO_WAIT, coro);
             break;
         case COCO_STATE_DEAD:
             /* 协程已退出，等待清理 */
+            trace_event(COCO_TRACE_CORO_DONE, coro);
             sched->coro_count--;
             break;
         case COCO_STATE_OVERFLOW:
@@ -666,6 +672,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     sched->coro_count++;
 
     enqueue_ready(sched, coro);
+    trace_event(COCO_TRACE_CORO_CREATE, coro);
 
     return coro;
 }
