@@ -571,6 +571,8 @@ void coco_channel_close(coco_channel_t *ch) {
     }
     coco_sched_t *sched = g_current_sched;
 
+    pthread_mutex_lock(&ch->wait_queue_lock);
+
     /* 唤醒所有普通等待的接收者 */
     while (ch->recv_wait_head) {
         coco_coro_t *coro = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
@@ -616,6 +618,8 @@ void coco_channel_close(coco_channel_t *ch) {
             }
         }
     }
+
+    pthread_mutex_unlock(&ch->wait_queue_lock);
 }
 
 /**
