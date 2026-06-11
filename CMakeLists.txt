@@ -174,6 +174,12 @@ add_library(coco STATIC
 target_include_directories(coco PUBLIC include)
 target_include_directories(coco PRIVATE src)
 
+# Symbol visibility for shared library
+if(NOT WIN32)
+    target_compile_options(coco PRIVATE -fvisibility=hidden)
+endif()
+target_compile_definitions(coco PRIVATE COCO_BUILDING)
+
 # Linux: 链接 liburing (如果可用)
 if(PLATFORM STREQUAL "linux" AND LIBURING)
     target_link_libraries(coco ${LIBURING})

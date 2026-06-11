@@ -18,6 +18,25 @@
 #ifndef COCO_H
 #define COCO_H
 
+/* Symbol visibility macros */
+#ifdef COCO_BUILD_SHARED
+    #ifdef _WIN32
+        #ifdef COCO_BUILDING
+            #define COCO_API __declspec(dllexport)
+        #else
+            #define COCO_API __declspec(dllimport)
+        #endif
+    #else
+        #ifdef COCO_BUILDING
+            #define COCO_API __attribute__((visibility("default")))
+        #else
+            #define COCO_API
+        #endif
+    #endif
+#else
+    #define COCO_API
+#endif
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -138,14 +157,14 @@ typedef enum coco_io_backend {
  * Must be called before coco_sched_run(). If the requested backend
  * is unavailable, returns COCO_ERROR.
  */
-int coco_sched_set_io_backend(coco_sched_t *sched, coco_io_backend_t backend);
+int COCO_API coco_sched_set_io_backend(coco_sched_t *sched, coco_io_backend_t backend);
 
 /**
  * @brief Get the current I/O backend
  * @param sched Scheduler pointer
  * @return Current backend type
  */
-coco_io_backend_t coco_sched_get_io_backend(coco_sched_t *sched);
+coco_io_backend_t COCO_API coco_sched_get_io_backend(coco_sched_t *sched);
 
 /** @} */
 
@@ -174,7 +193,7 @@ typedef struct coco_io_options {
  * Must be called before coco_sched_run(). Options are applied
  * during I/O backend initialization.
  */
-int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options);
+int COCO_API coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *options);
 
 /**
  * @brief Get current I/O configuration
@@ -182,7 +201,7 @@ int coco_sched_set_io_options(coco_sched_t *sched, const coco_io_options_t *opti
  * @param options Output configuration
  * @return COCO_OK on success, COCO_ERROR on failure
  */
-int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options);
+int COCO_API coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options);
 
 /**
  * @brief Get io_uring statistics (Linux only)
@@ -192,7 +211,7 @@ int coco_sched_get_io_options(coco_sched_t *sched, coco_io_options_t *options);
  *
  * On non-Linux platforms, outputs are set to 0.
  */
-void coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count);
+void COCO_API coco_iouring_get_stats(coco_sched_t *sched, uint64_t *submit_count, uint64_t *syscall_count);
 
 /** @} */
 
@@ -231,7 +250,7 @@ typedef struct coco_batch_result {
  * Creates a batch context for accumulating I/O operations.
  * Operations are not submitted until coco_batch_submit() is called.
  */
-coco_batch_io_t *coco_batch_begin(coco_sched_t *sched);
+coco_batch_io_t *COCO_API coco_batch_begin(coco_sched_t *sched);
 
 /**
  * @brief Add a read operation to batch
@@ -241,7 +260,7 @@ coco_batch_io_t *coco_batch_begin(coco_sched_t *sched);
  * @param count Maximum bytes to read
  * @return COCO_OK on success, negative error code on failure
  */
-int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count);
+int COCO_API coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count);
 
 /**
  * @brief Add a write operation to batch
@@ -251,7 +270,7 @@ int coco_batch_add_read(coco_batch_io_t *batch, int fd, void *buf, size_t count)
  * @param count Bytes to write
  * @return COCO_OK on success, negative error code on failure
  */
-int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count);
+int COCO_API coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t count);
 
 /**
  * @brief Submit batch I/O and wait for completion
@@ -263,14 +282,14 @@ int coco_batch_add_write(coco_batch_io_t *batch, int fd, const void *buf, size_t
  * Submits all accumulated operations and blocks until completion.
  * After this call, the batch context is automatically ended.
  */
-int coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results);
+int COCO_API coco_batch_submit(coco_batch_io_t *batch, coco_batch_result_t *results, size_t max_results);
 
 /**
  * @brief Cancel a batch I/O
  * @param batch Batch context
  * @return COCO_OK on success, negative error code on failure
  */
-int coco_batch_cancel(coco_batch_io_t *batch);
+int COCO_API coco_batch_cancel(coco_batch_io_t *batch);
 
 /**
  * @brief End a batch context without submitting
@@ -278,7 +297,7 @@ int coco_batch_cancel(coco_batch_io_t *batch);
  *
  * Discards all accumulated operations and frees the context.
  */
-void coco_batch_end(coco_batch_io_t *batch);
+void COCO_API coco_batch_end(coco_batch_io_t *batch);
 
 /** @} */
 
@@ -295,7 +314,7 @@ void coco_batch_end(coco_batch_io_t *batch);
  * The scheduler manages coroutine execution, I/O events, and timers.
  * Each scheduler has its own stack pool for memory reuse.
  */
-coco_sched_t *coco_sched_create(void);
+coco_sched_t *COCO_API coco_sched_create(void);
 
 /**
  * @brief Destroy a scheduler and free all resources
@@ -304,7 +323,7 @@ coco_sched_t *coco_sched_create(void);
  * This will terminate all running coroutines and free associated memory.
  * The stack pool is destroyed, returning all memory to the system.
  */
-void coco_sched_destroy(coco_sched_t *sched);
+void COCO_API coco_sched_destroy(coco_sched_t *sched);
 
 /**
  * @brief Run the scheduler until all coroutines finish
@@ -314,7 +333,7 @@ void coco_sched_destroy(coco_sched_t *sched);
  * This is a blocking call that runs the event loop until there are
  * no more ready or waiting coroutines.
  */
-int coco_sched_run(coco_sched_t *sched);
+int COCO_API coco_sched_run(coco_sched_t *sched);
 
 /**
  * @brief Perform a single scheduling iteration
@@ -324,7 +343,7 @@ int coco_sched_run(coco_sched_t *sched);
  * Processes one ready coroutine and handles any expired timers.
  * Useful for integrating with external event loops.
  */
-int coco_sched_run_once(coco_sched_t *sched);
+int COCO_API coco_sched_run_once(coco_sched_t *sched);
 
 /**
  * @brief Get the current scheduler for this thread
@@ -333,7 +352,7 @@ int coco_sched_run_once(coco_sched_t *sched);
  * Each thread can have its own scheduler. This function returns
  * the scheduler associated with the calling thread.
  */
-coco_sched_t *coco_sched_get_current(void);
+coco_sched_t *COCO_API coco_sched_get_current(void);
 
 /**
  * @brief Check if a stack map is loaded for the scheduler
@@ -357,7 +376,7 @@ uint32_t coco_sched_get_stack_map_count(coco_sched_t *sched);
  *
  * Default: disabled, 10ms time slice
  */
-int coco_sched_set_fairness(coco_sched_t *sched, bool enabled, uint32_t slice_ms);
+int COCO_API coco_sched_set_fairness(coco_sched_t *sched, bool enabled, uint32_t slice_ms);
 /** @} */
 
 /* === Coroutine Lifecycle API === */
@@ -378,7 +397,7 @@ int coco_sched_set_fairness(coco_sched_t *sched, bool enabled, uint32_t slice_ms
  * added to the ready queue. The stack is allocated from the scheduler's
  * stack pool for memory reuse.
  */
-coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, size_t stack_size);
+coco_coro_t *COCO_API coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, size_t stack_size);
 
 /**
  * @brief Exit the current coroutine with a result
@@ -388,7 +407,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
  * Must be called from within the coroutine. After calling, the coroutine
  * enters COCO_STATE_DEAD state.
  */
-void coco_exit(coco_coro_t *coro, void *result);
+void COCO_API coco_exit(coco_coro_t *coro, void *result);
 
 /**
  * @brief Yield execution to the scheduler
@@ -396,7 +415,7 @@ void coco_exit(coco_coro_t *coro, void *result);
  * Must be called from within a coroutine. The coroutine remains in
  * COCO_STATE_READY state and will be rescheduled later.
  */
-int coco_yield(void);
+int COCO_API coco_yield(void);
 
 /**
  * @brief Wait for a coroutine to finish and get its result
@@ -415,7 +434,7 @@ void *coco_join(coco_coro_t *coro);
  * The coroutine must be in COCO_STATE_DEAD state.
  * Returns the stack to the scheduler's pool for reuse.
  */
-void coco_destroy(coco_coro_t *coro);
+void COCO_API coco_destroy(coco_coro_t *coro);
 
 /**
  * @brief Validate that a stack map is loaded for dynamic stack growth
@@ -427,7 +446,7 @@ void coco_destroy(coco_coro_t *coro);
  * Call this before creating dynamic stack coroutines to ensure
  * the stack map is available.
  */
-int coco_validate_stack_map(coco_sched_t *sched);
+int COCO_API coco_validate_stack_map(coco_sched_t *sched);
 /** @} */
 
 /* === Coroutine Query API === */
@@ -440,21 +459,21 @@ int coco_validate_stack_map(coco_sched_t *sched);
  * @brief Get the currently running coroutine
  * @return Current coroutine pointer, or NULL if not in a coroutine
  */
-coco_coro_t *coco_self(void);
+coco_coro_t *COCO_API coco_self(void);
 
 /**
  * @brief Get the state of a coroutine
  * @param coro Coroutine pointer
  * @return Current state (COCO_STATE_DEAD if coro is NULL)
  */
-coco_state_t coco_get_state(coco_coro_t *coro);
+coco_state_t COCO_API coco_get_state(coco_coro_t *coro);
 
 /**
  * @brief Get the unique ID of a coroutine
  * @param coro Coroutine pointer
  * @return Unique 64-bit ID, or 0 if coro is NULL
  */
-uint64_t coco_get_id(coco_coro_t *coro);
+uint64_t COCO_API coco_get_id(coco_coro_t *coro);
 
 /**
  * @brief Set the error callback for a coroutine
@@ -464,7 +483,7 @@ uint64_t coco_get_id(coco_coro_t *coro);
  * The callback is invoked when the coroutine encounters an error
  * such as stack overflow.
  */
-void coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb);
+void COCO_API coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb);
 
 /**
  * @brief Set the priority of a coroutine
@@ -473,14 +492,14 @@ void coco_set_error_cb(coco_coro_t *coro, coco_error_cb cb);
  *
  * Higher priority coroutines are scheduled before lower priority ones.
  */
-void coco_set_priority(coco_coro_t *coro, coco_priority_t priority);
+void COCO_API coco_set_priority(coco_coro_t *coro, coco_priority_t priority);
 
 /**
  * @brief Get the priority of a coroutine
  * @param coro Coroutine pointer
  * @return Priority level (COCO_PRIORITY_NORMAL if coro is NULL)
  */
-coco_priority_t coco_get_priority(coco_coro_t *coro);
+coco_priority_t COCO_API coco_get_priority(coco_coro_t *coro);
 
 /**
  * @brief Get the stack usage of a coroutine
@@ -490,7 +509,7 @@ coco_priority_t coco_get_priority(coco_coro_t *coro);
  * Note: This samples at yield/exit points and may underestimate
  * the peak usage during deep recursion.
  */
-size_t coco_get_stack_usage(coco_coro_t *coro);
+size_t COCO_API coco_get_stack_usage(coco_coro_t *coro);
 /** @} */
 
 /* === Channel API === */
@@ -504,7 +523,7 @@ size_t coco_get_stack_usage(coco_coro_t *coro);
  * @param capacity Buffer size (0 = unbuffered/synchronous)
  * @return Channel pointer, or NULL on failure
  */
-coco_channel_t *coco_channel_create(size_t capacity);
+coco_channel_t *COCO_API coco_channel_create(size_t capacity);
 
 /**
  * @brief Send a value through the channel (blocking)
@@ -515,7 +534,7 @@ coco_channel_t *coco_channel_create(size_t capacity);
  * For buffered channels, returns immediately if buffer has space.
  * For unbuffered channels, blocks until a receiver is ready.
  */
-int coco_channel_send(coco_channel_t *ch, void *value);
+int COCO_API coco_channel_send(coco_channel_t *ch, void *value);
 
 /**
  * @brief Receive a value from the channel (blocking)
@@ -525,7 +544,7 @@ int coco_channel_send(coco_channel_t *ch, void *value);
  *
  * Blocks until a value is available or the channel is closed.
  */
-int coco_channel_recv(coco_channel_t *ch, void **value);
+int COCO_API coco_channel_recv(coco_channel_t *ch, void **value);
 
 /**
  * @brief Close a channel
@@ -534,7 +553,7 @@ int coco_channel_recv(coco_channel_t *ch, void **value);
  * After closing, senders will receive COCO_ERROR_CHANNEL_CLOSED.
  * Receivers can still drain remaining buffered values.
  */
-void coco_channel_close(coco_channel_t *ch);
+void COCO_API coco_channel_close(coco_channel_t *ch);
 
 /**
  * @brief Destroy a channel
@@ -542,7 +561,7 @@ void coco_channel_close(coco_channel_t *ch);
  *
  * The channel must be closed first. Frees all resources.
  */
-void coco_channel_destroy(coco_channel_t *ch);
+void COCO_API coco_channel_destroy(coco_channel_t *ch);
 /** @} */
 
 /* === Channel Select API === */
@@ -600,7 +619,7 @@ int coco_channel_select(coco_select_case_t *cases, int ncases,
  *
  * Yields to the scheduler while waiting for data.
  */
-int coco_read(int fd, void *buf, size_t count);
+int COCO_API coco_read(int fd, void *buf, size_t count);
 
 /**
  * @brief Write to a file descriptor (blocking for coroutines)
@@ -611,7 +630,7 @@ int coco_read(int fd, void *buf, size_t count);
  *
  * Yields to the scheduler while waiting for write readiness.
  */
-int coco_write(int fd, const void *buf, size_t count);
+int COCO_API coco_write(int fd, const void *buf, size_t count);
 
 /**
  * @brief Accept a connection (blocking for coroutines)
@@ -622,7 +641,7 @@ int coco_write(int fd, const void *buf, size_t count);
  *
  * Yields to the scheduler while waiting for a connection.
  */
-int coco_accept(int fd, void *addr, size_t *addrlen);
+int COCO_API coco_accept(int fd, void *addr, size_t *addrlen);
 
 /**
  * @brief Connect to a remote host (blocking for coroutines)
@@ -633,7 +652,7 @@ int coco_accept(int fd, void *addr, size_t *addrlen);
  *
  * Yields to the scheduler while connecting.
  */
-int coco_connect(int fd, const void *addr, size_t addrlen);
+int COCO_API coco_connect(int fd, const void *addr, size_t addrlen);
 
 /**
  * @brief Sleep for a duration
@@ -642,7 +661,7 @@ int coco_connect(int fd, const void *addr, size_t addrlen);
  *
  * Yields to the scheduler. Other coroutines can run during the sleep.
  */
-int coco_sleep(uint64_t ms);
+int COCO_API coco_sleep(uint64_t ms);
 /** @} */
 
 /* === Timer API === */
@@ -661,7 +680,7 @@ int coco_sleep(uint64_t ms);
  * The timer is automatically freed after the callback executes.
  * Use coco_timer_cancel() to cancel before it fires.
  */
-coco_timer_t *coco_timer(uint64_t delay_ms, void (*callback)(void*), void *arg);
+coco_timer_t *COCO_API coco_timer(uint64_t delay_ms, void (*callback)(void*), void *arg);
 
 /**
  * @brief Cancel a timer (O(1) operation)
@@ -670,7 +689,7 @@ coco_timer_t *coco_timer(uint64_t delay_ms, void (*callback)(void*), void *arg);
  * Removes the timer from the timing wheel and frees it.
  * Safe to call even if the timer has already fired.
  */
-void coco_timer_cancel(coco_timer_t *timer);
+void COCO_API coco_timer_cancel(coco_timer_t *timer);
 
 /**
  * @brief Create a timer with explicit scheduler
@@ -683,7 +702,7 @@ void coco_timer_cancel(coco_timer_t *timer);
  * Explicit scheduler version for multi-scheduler scenarios.
  * Each thread can have its own scheduler via TLS.
  */
-coco_timer_t *coco_timer_ex(coco_sched_t *sched, uint64_t delay_ms, void (*callback)(void*), void *arg);
+coco_timer_t *COCO_API coco_timer_ex(coco_sched_t *sched, uint64_t delay_ms, void (*callback)(void*), void *arg);
 /** @} */
 
 /* === Cancellation API === */
@@ -699,7 +718,7 @@ coco_timer_t *coco_timer_ex(coco_sched_t *sched, uint64_t delay_ms, void (*callb
  *
  * The coroutine will receive COCO_ERROR_CANCELLED at its next yield point.
  */
-int coco_cancel(coco_coro_t *coro);
+int COCO_API coco_cancel(coco_coro_t *coro);
 
 /**
  * @brief Check if the current coroutine is cancelled
@@ -708,7 +727,7 @@ int coco_cancel(coco_coro_t *coro);
  * Should be called periodically in long-running coroutines
  * to enable cooperative cancellation.
  */
-int coco_cancelled(void);
+int COCO_API coco_cancelled(void);
 /** @} */
 
 /* === Preemption API === */
@@ -723,7 +742,7 @@ int coco_cancelled(void);
  * After calling this, the coroutine may be preempted after running
  * for more than 10ms without yielding.
  */
-void coco_preempt_enable(void);
+void COCO_API coco_preempt_enable(void);
 
 /**
  * @brief Disable preemption for the current coroutine
@@ -731,13 +750,13 @@ void coco_preempt_enable(void);
  * Use this for critical sections that must not be interrupted,
  * such as stack growth operations.
  */
-void coco_preempt_disable(void);
+void COCO_API coco_preempt_disable(void);
 
 /**
  * @brief Check if preemption is pending
  * @return 1 if preemption is pending, 0 otherwise
  */
-int coco_preempt_is_pending(void);
+int COCO_API coco_preempt_is_pending(void);
 
 /**
  * @brief Cooperative preemption checkpoint
@@ -745,7 +764,7 @@ int coco_preempt_is_pending(void);
  * Call this periodically in long-running loops to allow
  * the scheduler to preempt the coroutine.
  */
-void coco_preempt_checkpoint(void);
+void COCO_API coco_preempt_checkpoint(void);
 /** @} */
 
 /* === Multi-threaded Scheduler API === */
@@ -762,7 +781,7 @@ void coco_preempt_checkpoint(void);
  * Creates worker threads and binds them to processors.
  * After calling this, coco_go() will dispatch coroutines to workers.
  */
-int coco_global_sched_start(uint32_t num_workers);
+int COCO_API coco_global_sched_start(uint32_t num_workers);
 
 /**
  * @brief Wait for all coroutines to complete
@@ -770,7 +789,7 @@ int coco_global_sched_start(uint32_t num_workers);
  *
  * Blocks until all active coroutines finish execution.
  */
-int coco_global_sched_wait(void);
+int COCO_API coco_global_sched_wait(void);
 
 /**
  * @brief Stop the global scheduler and join worker threads
@@ -778,7 +797,7 @@ int coco_global_sched_wait(void);
  *
  * Gracefully shuts down all worker threads.
  */
-int coco_global_sched_stop(void);
+int COCO_API coco_global_sched_stop(void);
 
 /**
  * @brief Coroutine launch options for coco_go
@@ -799,7 +818,7 @@ typedef struct coco_go_opts {
  * In multi-threaded scheduler, auto-selects the least loaded P.
  * In single-threaded scheduler, uses current scheduler.
  */
-coco_coro_t *coco_go(void (*entry)(void*), void *arg);
+coco_coro_t *COCO_API coco_go(void (*entry)(void*), void *arg);
 
 /**
  * @brief Launch a coroutine on specified P
@@ -810,7 +829,7 @@ coco_coro_t *coco_go(void (*entry)(void*), void *arg);
  *
  * Explicitly specify P for data locality scenarios.
  */
-coco_coro_t *coco_go_on(int p_id, void (*entry)(void*), void *arg);
+coco_coro_t *COCO_API coco_go_on(int p_id, void (*entry)(void*), void *arg);
 
 /**
  * @brief Launch a coroutine with options
@@ -833,25 +852,25 @@ coco_coro_t *coco_go_with_opts(void (*entry)(void*), void *arg,
  * @brief Get the full version string
  * @return Version string in "X.Y.Z" format
  */
-const char *coco_version(void);
+const char *COCO_API coco_version(void);
 
 /**
  * @brief Get the major version number
  * @return Major version (e.g., 2 for "2.1.0")
  */
-int coco_version_major(void);
+int COCO_API coco_version_major(void);
 
 /**
  * @brief Get the minor version number
  * @return Minor version (e.g., 1 for "2.1.0")
  */
-int coco_version_minor(void);
+int COCO_API coco_version_minor(void);
 
 /**
  * @brief Get the patch version number
  * @return Patch version (e.g., 0 for "2.1.0")
  */
-int coco_version_patch(void);
+int COCO_API coco_version_patch(void);
 
 /** @} */
 
