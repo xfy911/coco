@@ -7,6 +7,7 @@
 
 #include "stack_common.h"
 #include "stack_pool_multi.h"
+#include "../coco_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -109,17 +110,19 @@ void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
         return NULL;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&pool->lock);
 
     pool->total_allocs++;
 
     int class_idx = stack_pool_multi_get_class_index(size);
+    void *result = NULL;
 
     /* 超出池范围，直接 mmap */
     if (class_idx < 0) {
         pool->pool_misses++;
-        pthread_mutex_unlock(&pool->lock);
-        return alloc_stack_mmap(size);
+        result = alloc_stack_mmap(size);
+        goto done;
     }
 
     /* 尝试从空闲链表获取 */
@@ -129,20 +132,22 @@ void *stack_pool_multi_alloc(stack_pool_multi_t *pool, size_t size) {
         pool->counts[class_idx]--;
         pool->pool_hits++;
 
-        void *stack_top = node->stack_top;
+        result = node->stack_top;
         size_t actual_size = node->size;
 
         /* 选择性清零栈 */
-        zero_stack(stack_top, actual_size, pool->zero_mode);
-
-        pthread_mutex_unlock(&pool->lock);
-        return stack_top;
+        zero_stack(result, actual_size, pool->zero_mode);
+        goto done;
     }
 
     /* 空闲链表为空，分配新栈 */
     pool->pool_misses++;
+    result = alloc_stack_mmap(pool->sizes[class_idx]);
+
+done:
     pthread_mutex_unlock(&pool->lock);
-    return alloc_stack_mmap(pool->sizes[class_idx]);
+    coco_preempt_unblock_signal();
+    return result;
 }
 
 /**
@@ -153,6 +158,7 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
         return;
     }
 
+    coco_preempt_block_signal();
     pthread_mutex_lock(&pool->lock);
 
     pool->total_frees++;
@@ -162,6 +168,7 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
     /* 超出池范围，直接 munmap */
     if (class_idx < 0) {
         pthread_mutex_unlock(&pool->lock);
+        coco_preempt_unblock_signal();
         free_stack_mmap(stack_top, size);
         return;
     }
@@ -169,6 +176,7 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
     /* 池已满，直接 munmap */
     if (pool->counts[class_idx] >= pool->limits[class_idx]) {
         pthread_mutex_unlock(&pool->lock);
+        coco_preempt_unblock_signal();
         free_stack_mmap(stack_top, size);
         return;
     }
@@ -186,6 +194,7 @@ void stack_pool_multi_free(stack_pool_multi_t *pool, void *stack_top, size_t siz
     pool->counts[class_idx]++;
 
     pthread_mutex_unlock(&pool->lock);
+    coco_preempt_unblock_signal();
 }
 
 /**
