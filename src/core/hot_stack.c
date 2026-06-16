@@ -151,10 +151,13 @@ static void backup_coro_stack(coco_coro_t *coro, coco_hot_slot_t *slot) {
     if (coro->stack_used == 0) return;
     void *src = (char *)slot->stack_top - coro->stack_used;
     if (coro->stack_backup_size < coro->stack_used) {
-        void *new_backup = realloc(coro->stack_backup, coro->stack_used);
+        /* 按 2x 增长预分配，最小 8KB，减少 realloc 次数 */
+        size_t new_size = coro->stack_backup_size ? coro->stack_backup_size * 2 : (8 * 1024);
+        if (new_size < coro->stack_used) new_size = coro->stack_used;
+        void *new_backup = realloc(coro->stack_backup, new_size);
         if (!new_backup) return;
         coro->stack_backup = new_backup;
-        coro->stack_backup_size = coro->stack_used;
+        coro->stack_backup_size = new_size;
     }
     memcpy(coro->stack_backup, src, coro->stack_used);
 }
