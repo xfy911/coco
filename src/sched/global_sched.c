@@ -334,14 +334,15 @@ static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
         free(coro);
     }
 
-    /* 本地队列溢出推入全局队列 */
-    if (coco_preempt_block_signal() != COCO_OK) {
-        return; /* 信号屏蔽失败，跳过负载均衡 */
+    /* 本地队列溢出推入全局队列 — 只在队列较大时检查，避免每次 yield 都加锁 */
+    if (atomic_load(&p->local_runq_size) >= LOCAL_RUNQ_MAX / 2) {
+        if (coco_preempt_block_signal() == COCO_OK) {
+            pthread_mutex_lock(&p->local_runq_lock);
+            runq_push_overflow(p);
+            pthread_mutex_unlock(&p->local_runq_lock);
+            coco_preempt_unblock_signal();
+        }
     }
-    pthread_mutex_lock(&p->local_runq_lock);
-    runq_push_overflow(p);
-    pthread_mutex_unlock(&p->local_runq_lock);
-    (void) coco_preempt_unblock_signal();
 
     /* 自适应负载均衡: 当队列深度差异超过阈值时触发均衡 */
     static _Thread_local int balance_counter = 0;
