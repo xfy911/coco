@@ -37,11 +37,14 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
 
     coco_coro_t *g = NULL;
 
+    coco_preempt_block_signal();
+
     /* 1. 本地队列 */
     g = runq_get(p);
     if (g) {
         /* 成功从本地获取，重置退避计数 */
         tl_steal_fail_count = 0;
+        coco_preempt_unblock_signal();
         return g;
     }
 
@@ -51,12 +54,14 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
         tl_steal_fail_count = 0;
         coco_sched_t *from = coco_global_get()->main_sched;
         coro_migrate_prepare(from, g);
+        coco_preempt_unblock_signal();
         return g;
     }
 
     /* 3. 工作窃取 — 自适应尝试次数 */
     coco_global_sched_t *sched = coco_global_get();
     if (!sched) {
+        coco_preempt_unblock_signal();
         return NULL;
     }
 
@@ -108,6 +113,7 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
                 }
                 runq_put_batch(p, batch, count);
             }
+            coco_preempt_unblock_signal();
             return g;
         }
         attempts++;
@@ -117,6 +123,7 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
     /* 更新失败计数 */
     tl_steal_fail_count += failed;
     record_steal_attempt();
+    coco_preempt_unblock_signal();
     return NULL;
 }
 

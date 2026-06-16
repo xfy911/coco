@@ -102,12 +102,10 @@ coco_coro_t *runq_get(coco_processor_t *p) {
         return NULL;
     }
 
-    coco_preempt_block_signal();
     pthread_mutex_lock(&p->local_runq_lock);
 
     if (!p->local_runq_head) {
         pthread_mutex_unlock(&p->local_runq_lock);
-        coco_preempt_unblock_signal();
         return NULL;
     }
 
@@ -125,7 +123,6 @@ coco_coro_t *runq_get(coco_processor_t *p) {
     atomic_fetch_sub(&p->local_runq_size, 1);
 
     pthread_mutex_unlock(&p->local_runq_lock);
-    coco_preempt_unblock_signal();
     return g;
 }
 
@@ -138,15 +135,12 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
     }
 
     /* 使用 trylock 减少阻塞 */
-    coco_preempt_block_signal();
     if (pthread_mutex_trylock(&target->local_runq_lock) != 0) {
-        coco_preempt_unblock_signal();
         return NULL;  /* 锁竞争，跳过这个 P */
     }
 
     if (atomic_load(&target->local_runq_size) == 0) {
         pthread_mutex_unlock(&target->local_runq_lock);
-        coco_preempt_unblock_signal();
         return NULL;
     }
 
@@ -178,7 +172,6 @@ coco_coro_t *runq_steal(coco_processor_t *target) {
     }
 
     pthread_mutex_unlock(&target->local_runq_lock);
-    coco_preempt_unblock_signal();
 
     return batch;
 }
