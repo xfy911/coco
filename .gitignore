@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-shared/
 build-asan/
 build_asan/
 build_clean/
@@ -7,6 +8,9 @@ build_coverage/
 build_test/
 build_ts/
 build-tsan/
+build-noasan/
+build-ubsan/
+build-ubsan-o0/
 cmake-build-*/
 Testing/
 *.o

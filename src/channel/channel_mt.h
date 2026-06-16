@@ -10,6 +10,15 @@
 #include "../coco_internal.h"
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdatomic.h>
+#include <stdint.h>
+
+/* 无锁 MPMC Ring Buffer（快速路径） */
+typedef struct {
+    _Atomic(uint32_t) head;
+    _Atomic(uint32_t) tail;
+    _Atomic(void*) buffer[];
+} mpmc_ring_t;
 
 /* 多线程 Channel 结构 */
 struct coco_channel_mt {
@@ -19,11 +28,8 @@ struct coco_channel_mt {
     /* 互斥锁保护 */
     pthread_mutex_t lock;
 
-    /* 有缓冲 channel: 环形缓冲区 */
-    void **buffer;
-    size_t head;              /* 读位置 */
-    size_t tail;              /* 写位置 */
-    size_t count;             /* 当前元素数 */
+    /* 无锁 MPMC Ring Buffer（有缓冲 channel 使用，无缓冲为 NULL） */
+    mpmc_ring_t *mpmc_ring;
 
     /* 等待队列 */
     coco_coro_t *send_wait_head;

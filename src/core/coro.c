@@ -7,7 +7,10 @@
 #include "hot_stack.h"
 #include "../../include/coco_stack_map.h"
 #include "../sched/global_sched.h"
+#include "../sched/runq.h"
 #include "stack_pool_multi.h"
+#include "cls.h"
+#include "trace.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -99,6 +102,7 @@ void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
 
     /* 设置位图对应位 */
     sched->ready_bitmap |= (1U << prio);
+    trace_event(COCO_TRACE_CORO_READY, coro);
 }
 
 /* === 调度器 API === */
@@ -215,6 +219,7 @@ void coco_sched_destroy(coco_sched_t *sched) {
     for (uint32_t i = 0; i < sched->coro_capacity; i++) {
         coco_coro_t *coro = sched->coro_table[i];
         if (coro) {
+            trace_event(COCO_TRACE_CORO_DESTROY, coro);
             /* 清理 select 状态 */
             coco_select_cleanup(coro);
 
@@ -235,6 +240,10 @@ void coco_sched_destroy(coco_sched_t *sched) {
             if (coro->stack_backup) {
                 free(coro->stack_backup);
                 coro->stack_backup = NULL;
+            }
+            if (coro->cls_table) {
+                cls_destroy_table(coro->cls_table);
+                coro->cls_table = NULL;
             }
             free(coro);
         }
@@ -363,6 +372,7 @@ static void switch_to_coro(coco_sched_t *sched, coco_coro_t *coro) {
     g_current_coro = coro;
     sched->current = coro;
     atomic_store_explicit(&coro->state, COCO_STATE_RUNNING, memory_order_release);
+    trace_event(COCO_TRACE_CORO_RUN, coro);
 
     sched->sched_tick++;
     coro->last_run_tick = sched->sched_tick;
@@ -472,9 +482,11 @@ static void handle_coro_return(coco_sched_t *sched, coco_coro_t *coro) {
             break;
         case COCO_STATE_WAITING:
             /* 协程等待 I/O 或 channel */
+            trace_event(COCO_TRACE_CORO_WAIT, coro);
             break;
         case COCO_STATE_DEAD:
             /* 协程已退出，等待清理 */
+            trace_event(COCO_TRACE_CORO_DONE, coro);
             sched->coro_count--;
             break;
         case COCO_STATE_OVERFLOW:
@@ -595,6 +607,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     coro->stack_backup = NULL;
     coro->stack_backup_size = 0;
     coro->stack_used = 0;
+    coro->cls_table = NULL;
 
     bool request_exclusive = (stack_size != 0 && stack_size >= COCO_STACK_FIXED);
 
@@ -660,6 +673,7 @@ coco_coro_t *coco_create(coco_sched_t *sched, void (*entry)(void*), void *arg, s
     sched->coro_count++;
 
     enqueue_ready(sched, coro);
+    trace_event(COCO_TRACE_CORO_CREATE, coro);
 
     return coro;
 }
@@ -708,6 +722,10 @@ void coco_exit(coco_coro_t *coro, void *result) {
         free(coro->stack_backup);
         coro->stack_backup = NULL;
     }
+    if (coro->cls_table) {
+        cls_destroy_table(coro->cls_table);
+        coro->cls_table = NULL;
+    }
 
     g_current_coro = NULL;
     coco_ctx_switch(&coro->ctx, g_return_ctx);
@@ -729,7 +747,9 @@ int coco_yield(void) {
                 coro->stack_used = used;
             }
         }
-        hot_lru_move_to_head(sched, &coro->hot_node);
+        if (++coro->hot_yield_count % 16 == 0) {
+            hot_lru_move_to_head(sched, &coro->hot_node);
+        }
     }
 
     if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_RUNNING) {
@@ -737,8 +757,13 @@ int coco_yield(void) {
         coco_global_sched_t *gs = coco_global_get();
 
         if (gs && gs->processor_count > 0) {
-            /* 多线程模式：放入全局队列 */
-            coco_global_runq_put(coro);
+            /* 多线程模式：优先放入当前 P 的本地队列 */
+            coco_processor_t *p = get_current_p();
+            if (p && runq_put(p, coro) == 0) {
+                /* 成功放入本地队列 */
+            } else {
+                coco_global_runq_put(coro);  /* 本地队列满或不在 worker 中 */
+            }
         } else {
             /* 单线程模式：放入本地队列 */
             enqueue_ready(sched, coro);
@@ -791,6 +816,10 @@ void coco_destroy(coco_coro_t *coro) {
     if (coro->stack_backup) {
         free(coro->stack_backup);
         coro->stack_backup = NULL;
+    }
+    if (coro->cls_table) {
+        cls_destroy_table(coro->cls_table);
+        coro->cls_table = NULL;
     }
     free(coro);
 }

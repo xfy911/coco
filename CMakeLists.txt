@@ -90,6 +90,9 @@ set(CORE_SOURCES
     src/core/preempt.c
     src/core/hot_stack.c
     src/core/version.c
+    src/core/cls.c
+    src/core/trace.c
+    src/core/debug.c
     src/sched/global_sched.c
     src/sched/runq.c
     src/sched/sched.c
@@ -153,26 +156,62 @@ elseif(PLATFORM STREQUAL "macos")
     endif()
 elseif(PLATFORM STREQUAL "windows")
     list(APPEND IO_SOURCES src/io/poll_windows.c)
+    list(APPEND IO_SOURCES src/io/batch_io_fallback.c)
     list(APPEND PLATFORM_SOURCES src/platform/windows/preempt.c)
     if(ARCH STREQUAL "x86_64")
         list(APPEND PLATFORM_ASM src/platform/windows/ctx_x86_64.S)
     elseif(ARCH STREQUAL "arm64")
         list(APPEND PLATFORM_ASM src/platform/windows/ctx_arm64.S)
     endif()
+elseif(PLATFORM STREQUAL "macos")
+    list(APPEND IO_SOURCES src/io/poll_macos.c)
+    list(APPEND IO_SOURCES src/io/batch_io_fallback.c)
+    list(APPEND PLATFORM_SOURCES src/platform/macos/preempt.c)
+    if(ARCH STREQUAL "x86_64")
+        list(APPEND PLATFORM_ASM src/platform/macos/ctx_x86_64.S)
+    elseif(ARCH STREQUAL "arm64")
+        list(APPEND PLATFORM_ASM src/platform/macos/ctx_arm64.S)
+    elseif(ARCH STREQUAL "universal")
+        set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64")
+        list(APPEND PLATFORM_ASM
+            src/platform/macos/ctx_x86_64.S
+            src/platform/macos/ctx_arm64.S
+        )
+    endif()
 endif()
 
-# 创建库
-add_library(coco STATIC
-    ${CORE_SOURCES}
-    ${PLATFORM_SOURCES}
-    ${TIMER_SOURCES}
-    ${CHANNEL_SOURCES}
-    ${IO_SOURCES}
-    ${PLATFORM_ASM}
-)
+# Build shared library option
+option(COCO_BUILD_SHARED "Build shared library" OFF)
+
+if(COCO_BUILD_SHARED)
+    add_library(coco SHARED
+        ${CORE_SOURCES}
+        ${PLATFORM_SOURCES}
+        ${TIMER_SOURCES}
+        ${CHANNEL_SOURCES}
+        ${IO_SOURCES}
+        ${PLATFORM_ASM}
+    )
+    target_compile_definitions(coco PUBLIC COCO_BUILD_SHARED)
+else()
+    add_library(coco STATIC
+        ${CORE_SOURCES}
+        ${PLATFORM_SOURCES}
+        ${TIMER_SOURCES}
+        ${CHANNEL_SOURCES}
+        ${IO_SOURCES}
+        ${PLATFORM_ASM}
+    )
+endif()
 
 target_include_directories(coco PUBLIC include)
 target_include_directories(coco PRIVATE src)
+
+# Symbol visibility for shared library
+if(NOT WIN32)
+    target_compile_options(coco PRIVATE -fvisibility=hidden)
+endif()
+target_compile_definitions(coco PRIVATE COCO_BUILDING)
 
 # Linux: 链接 liburing (如果可用)
 if(PLATFORM STREQUAL "linux" AND LIBURING)
@@ -240,6 +279,9 @@ if(COCO_BUILD_TESTS)
         test_long_running
         test_safety
         test_stack_map
+        test_cls
+        test_trace
+        test_debug
         test_stack_grow
         stress_coro_count
         stress_channel_burst
@@ -380,3 +422,9 @@ install(FILES include/coco_safety.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     OPTIONAL
 )
+
+# pkg-config file
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/coco.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/coco.pc @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/coco.pc
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

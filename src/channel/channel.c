@@ -557,6 +557,364 @@ int coco_channel_recv(coco_channel_t *ch, void **value) {
 }
 
 /**
+ * coco_channel_send_batch - 批量发送数据（阻塞）
+ *
+ * @param ch channel 指针
+ * @param vals 数据指针数组
+ * @param n 发送数量
+ * @return 成功发送的数量，负数错误码
+ */
+int coco_channel_send_batch(coco_channel_t *ch, void **vals, int n) {
+    if (!ch || !vals || n <= 0) {
+        return COCO_ERROR;
+    }
+
+    if (atomic_load_explicit(&ch->closed, memory_order_acquire)) {
+        return COCO_ERROR_CHANNEL_CLOSED;
+    }
+
+    coco_sched_t *sched = g_current_sched;
+    coco_coro_t *coro = g_current_coro;
+
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
+
+    int sent = 0;
+
+    while (sent < n) {
+        void *value = vals[sent];
+
+        /* 优先唤醒普通接收者（无缓冲场景） */
+        coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
+        if (recv_waiter) {
+            recv_waiter->wait_node.value = value;
+            enqueue_ready(sched, recv_waiter);
+            sent++;
+            continue;
+        }
+
+        /* 然后唤醒 select 接收者 */
+        coco_select_node_t *recv_node = dequeue_select_node(&ch->recv_select_head,
+                                                            &ch->recv_select_tail);
+        while (recv_node) {
+            coco_coro_t *sel_coro = recv_node->coro;
+            if (!sel_coro->select_nodes || sel_coro->select_ready_index != -1) {
+                recv_node = dequeue_select_node(&ch->recv_select_head, &ch->recv_select_tail);
+                continue;
+            }
+
+            sel_coro->wait_node.value = value;
+            sel_coro->select_ready_index = recv_node->case_index;
+            select_dequeue_all(sel_coro);
+            cancel_select_timer(sel_coro);
+            enqueue_ready(sched, sel_coro);
+            sent++;
+            break;
+        }
+        if (recv_node) {
+            continue;
+        }
+
+        /* 有缓冲 channel: 尝试批量放入缓冲区 */
+        if (ch->capacity > 0) {
+            int batch = n - sent;
+            size_t space = ch->capacity - ch->count;
+            if (batch > (int)space) {
+                batch = (int)space;
+            }
+
+            for (int i = 0; i < batch; i++) {
+                ch->buffer[ch->tail] = vals[sent + i];
+                ch->tail = (ch->tail + 1) % ch->capacity;
+            }
+            ch->count += batch;
+            sent += batch;
+
+            if (sent < n) {
+                /* 缓冲区满，需要 yield */
+                if (coro->wait_node.in_use) {
+                    return sent > 0 ? sent : COCO_ERROR;
+                }
+
+                if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+                    return sent > 0 ? sent : COCO_ERROR_CHANNEL_CLOSED;
+                }
+
+                coco_preempt_block_signal();
+                pthread_mutex_lock(&ch->wait_queue_lock);
+                if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+                    pthread_mutex_unlock(&ch->wait_queue_lock);
+                    coco_preempt_unblock_signal();
+                    return sent > 0 ? sent : COCO_ERROR_CHANNEL_CLOSED;
+                }
+                atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
+                coro->wait_node.value = vals[sent];
+                coro->wait_node.freed_by_destroy = false;
+                enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro, ch);
+                pthread_mutex_unlock(&ch->wait_queue_lock);
+                coco_preempt_unblock_signal();
+
+                atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+                coco_yield();
+
+                coco_channel_unref(ch);
+
+                if (coro->cancelled) {
+                    return sent > 0 ? sent : COCO_ERROR_CANCELLED;
+                }
+
+                if (coro->wait_node.freed_by_destroy || atomic_load_explicit(&ch->closed, memory_order_acquire)) {
+                    return sent > 0 ? sent : COCO_ERROR_CHANNEL_CLOSED;
+                }
+
+                /* 被唤醒后继续循环 */
+            }
+            continue;
+        }
+
+        /* 无缓冲 channel 且无接收者: 阻塞等待 */
+        if (coro->wait_node.in_use) {
+            return sent > 0 ? sent : COCO_ERROR;
+        }
+
+        if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+            return sent > 0 ? sent : COCO_ERROR_CHANNEL_CLOSED;
+        }
+
+        coco_preempt_block_signal();
+        pthread_mutex_lock(&ch->wait_queue_lock);
+        if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+            pthread_mutex_unlock(&ch->wait_queue_lock);
+            coco_preempt_unblock_signal();
+            return sent > 0 ? sent : COCO_ERROR_CHANNEL_CLOSED;
+        }
+        atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
+        coro->wait_node.value = value;
+        coro->wait_node.freed_by_destroy = false;
+        enqueue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail, coro, ch);
+        pthread_mutex_unlock(&ch->wait_queue_lock);
+        coco_preempt_unblock_signal();
+
+        atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+        coco_yield();
+
+        coco_channel_unref(ch);
+
+        if (coro->cancelled) {
+            return sent > 0 ? sent : COCO_ERROR_CANCELLED;
+        }
+
+        if (coro->wait_node.freed_by_destroy || atomic_load_explicit(&ch->closed, memory_order_acquire)) {
+            return sent > 0 ? sent : COCO_ERROR_CHANNEL_CLOSED;
+        }
+
+        sent++;
+    }
+
+    return sent;
+}
+
+/**
+ * coco_channel_recv_batch - 批量接收数据（阻塞）
+ *
+ * @param ch channel 指针
+ * @param vals 接收数据指针数组
+ * @param n 最大接收数量
+ * @param received 输出实际接收数量
+ * @return COCO_OK 成功，负数错误码
+ */
+int coco_channel_recv_batch(coco_channel_t *ch, void **vals, int n, int *received) {
+    if (!ch || !vals || n <= 0 || !received) {
+        return COCO_ERROR;
+    }
+
+    *received = 0;
+
+    coco_sched_t *sched = g_current_sched;
+    coco_coro_t *coro = g_current_coro;
+
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
+
+    while (*received < n) {
+        /* 检查 channel 是否已关闭且为空 */
+        if (atomic_load_explicit(&ch->closed, memory_order_acquire) && ch->count == 0 && !ch->send_wait_head && !ch->send_select_head) {
+            return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+        }
+
+        /* 有缓冲 channel: 尝试批量从缓冲区取 */
+        if (ch->capacity > 0 && ch->count > 0) {
+            int batch = n - *received;
+            if (batch > (int)ch->count) {
+                batch = (int)ch->count;
+            }
+
+            for (int i = 0; i < batch; i++) {
+                vals[*received + i] = ch->buffer[ch->head];
+                ch->head = (ch->head + 1) % ch->capacity;
+            }
+            ch->count -= batch;
+            *received += batch;
+
+            /* 尝试唤醒等待的发送者 */
+            coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
+            if (send_waiter) {
+                ch->buffer[ch->tail] = send_waiter->wait_node.value;
+                ch->tail = (ch->tail + 1) % ch->capacity;
+                ch->count++;
+                enqueue_ready(sched, send_waiter);
+            } else {
+                coco_select_node_t *send_node = dequeue_select_node(&ch->send_select_head,
+                                                                    &ch->send_select_tail);
+                while (send_node) {
+                    coco_coro_t *sel_coro = send_node->coro;
+                    if (!sel_coro->select_nodes || sel_coro->select_ready_index != -1) {
+                        send_node = dequeue_select_node(&ch->send_select_head,
+                                                        &ch->send_select_tail);
+                        continue;
+                    }
+
+                    ch->buffer[ch->tail] = send_node->send_val;
+                    ch->tail = (ch->tail + 1) % ch->capacity;
+                    ch->count++;
+
+                    sel_coro->select_ready_index = send_node->case_index;
+                    select_dequeue_all(sel_coro);
+                    cancel_select_timer(sel_coro);
+                    enqueue_ready(sched, sel_coro);
+                    break;
+                }
+            }
+
+            if (*received < n) {
+                /* 需要更多数据，检查是否关闭 */
+                if (atomic_load_explicit(&ch->closed, memory_order_acquire) && ch->count == 0 && !ch->send_wait_head && !ch->send_select_head) {
+                    return COCO_OK;
+                }
+
+                /* 还有空间但缓冲区空，需要 yield */
+                if (coro->wait_node.in_use) {
+                    return *received > 0 ? COCO_OK : COCO_ERROR;
+                }
+
+                if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+                    return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+                }
+
+                coco_preempt_block_signal();
+                pthread_mutex_lock(&ch->wait_queue_lock);
+                if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+                    pthread_mutex_unlock(&ch->wait_queue_lock);
+                    coco_preempt_unblock_signal();
+                    return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+                }
+                atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
+                coro->wait_node.value = NULL;
+                coro->wait_node.freed_by_destroy = false;
+                enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro, ch);
+                pthread_mutex_unlock(&ch->wait_queue_lock);
+                coco_preempt_unblock_signal();
+
+                atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+                coco_yield();
+
+                coco_channel_unref(ch);
+
+                if (coro->cancelled) {
+                    return *received > 0 ? COCO_OK : COCO_ERROR_CANCELLED;
+                }
+
+                if (coro->wait_node.freed_by_destroy) {
+                    return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+                }
+
+                /* 被唤醒后检查是否有值 */
+                if (coro->wait_node.value) {
+                    vals[*received] = coro->wait_node.value;
+                    (*received)++;
+                }
+            }
+            continue;
+        }
+
+        /* 无缓冲 channel: 优先检查普通发送者 */
+        coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
+        if (send_waiter) {
+            vals[*received] = send_waiter->wait_node.value;
+            (*received)++;
+            enqueue_ready(sched, send_waiter);
+            continue;
+        }
+
+        /* 然后检查 select 发送者 */
+        coco_select_node_t *send_node = dequeue_select_node(&ch->send_select_head,
+                                                            &ch->send_select_tail);
+        while (send_node) {
+            coco_coro_t *sel_coro = send_node->coro;
+            if (!sel_coro->select_nodes || sel_coro->select_ready_index != -1) {
+                send_node = dequeue_select_node(&ch->send_select_head,
+                                                &ch->send_select_tail);
+                continue;
+            }
+
+            vals[*received] = send_node->send_val;
+            (*received)++;
+            sel_coro->select_ready_index = send_node->case_index;
+            select_dequeue_all(sel_coro);
+            cancel_select_timer(sel_coro);
+            enqueue_ready(sched, sel_coro);
+            break;
+        }
+        if (send_node) {
+            continue;
+        }
+
+        /* 无发送者: 阻塞等待 */
+        if (coro->wait_node.in_use) {
+            return *received > 0 ? COCO_OK : COCO_ERROR;
+        }
+
+        if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+            return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+        }
+
+        coco_preempt_block_signal();
+        pthread_mutex_lock(&ch->wait_queue_lock);
+        if (atomic_load_explicit(&ch->destroying, memory_order_acquire)) {
+            pthread_mutex_unlock(&ch->wait_queue_lock);
+            coco_preempt_unblock_signal();
+            return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+        }
+        atomic_fetch_add_explicit(&ch->refcount, 1, memory_order_relaxed);
+        coro->wait_node.value = NULL;
+        coro->wait_node.freed_by_destroy = false;
+        enqueue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail, coro, ch);
+        pthread_mutex_unlock(&ch->wait_queue_lock);
+        coco_preempt_unblock_signal();
+
+        atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+        coco_yield();
+
+        coco_channel_unref(ch);
+
+        if (coro->cancelled) {
+            return *received > 0 ? COCO_OK : COCO_ERROR_CANCELLED;
+        }
+
+        if (coro->wait_node.freed_by_destroy) {
+            return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+        }
+
+        if (atomic_load_explicit(&ch->closed, memory_order_acquire) && !coro->wait_node.value) {
+            return *received > 0 ? COCO_OK : COCO_ERROR_CHANNEL_CLOSED;
+        }
+
+        vals[*received] = coro->wait_node.value;
+        (*received)++;
+    }
+
+    return COCO_OK;
+}
+
+/**
  * coco_channel_close - 关闭 channel
  *
  * @param ch channel 指针

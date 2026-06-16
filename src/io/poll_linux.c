@@ -38,10 +38,15 @@ extern void coco_iouring_get_stats_internal(coco_sched_t *sched, uint64_t *submi
  * coco_poll_set_nonblock - 设置 fd 为非阻塞模式
  */
 void coco_poll_set_nonblock(int fd) {
+    if (fd_table_is_nonblock(fd)) {
+        return;
+    }
+
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags != -1 && !(flags & O_NONBLOCK)) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
+    fd_table_mark_nonblock(fd);
 }
 
 /* === Poll 层实现 === */
@@ -170,9 +175,7 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
     }
 
     /* epoll 注册 - 使用 O_NONBLOCK 缓存 */
-    if (fd < 32 && coro && (coro->nonblock_fds_set & (1U << fd))) {
-        /* 已设置，跳过 fcntl */
-    } else {
+    if (!fd_table_is_nonblock(fd)) {
         int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0) {
             return COCO_ERROR;
@@ -180,9 +183,7 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
         if (!(flags & O_NONBLOCK)) {
             fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         }
-        if (fd < 32 && coro) {
-            coro->nonblock_fds_set |= (1U << fd);
-        }
+        fd_table_mark_nonblock(fd);
     }
 
     struct epoll_event ev;
@@ -213,12 +214,7 @@ void coco_poll_unregister(coco_sched_t *sched, int fd) {
         return;
     }
 
-    /* 清除 O_NONBLOCK 缓存 */
-    coco_coro_t *coro = g_current_coro;
-    if (fd < 32 && coro) {
-        coro->nonblock_fds_set &= ~(1U << fd);
-    }
-
+    /* epoll 注销 */
     epoll_ctl(sched->poll_fd, EPOLL_CTL_DEL, fd, NULL);
     fd_table_clear(sched->fd_table, fd);
 }

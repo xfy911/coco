@@ -52,6 +52,49 @@ int runq_put(coco_processor_t *p, coco_coro_t *g) {
 }
 
 /**
+ * 本地运行队列批量入队
+ */
+int runq_put_batch(coco_processor_t *p, coco_coro_t *head, int count) {
+    if (!p || !head || count <= 0) {
+        return -1;
+    }
+
+    coco_preempt_block_signal();
+    pthread_mutex_lock(&p->local_runq_lock);
+
+    if (atomic_load(&p->local_runq_size) + count > LOCAL_RUNQ_MAX) {
+        pthread_mutex_unlock(&p->local_runq_lock);
+        coco_preempt_unblock_signal();
+        return -1;
+    }
+
+    int actual_count = 0;
+    coco_coro_t *prev_link = p->local_runq_tail;
+    coco_coro_t *g = head;
+    while (g && actual_count < count) {
+        g->prev = prev_link;
+        prev_link = g;
+        g = g->next;
+        actual_count++;
+    }
+    coco_coro_t *tail = prev_link;
+
+    if (p->local_runq_tail) {
+        p->local_runq_tail->next = head;
+    } else {
+        p->local_runq_head = head;
+    }
+    p->local_runq_tail = tail;
+    tail->next = NULL;
+
+    atomic_fetch_add(&p->local_runq_size, actual_count);
+
+    pthread_mutex_unlock(&p->local_runq_lock);
+    coco_preempt_unblock_signal();
+    return 0;
+}
+
+/**
  * 本地运行队列出队
  */
 coco_coro_t *runq_get(coco_processor_t *p) {

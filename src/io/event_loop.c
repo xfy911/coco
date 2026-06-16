@@ -15,6 +15,9 @@
 #ifndef _WIN32
 #include <sys/socket.h>
 #include <poll.h>
+#ifdef __linux__
+#include <sys/sendfile.h>
+#endif
 #endif
 
 /* 外部全局变量（TLS） */
@@ -240,6 +243,126 @@ int coco_connect(int fd, const void *addr, size_t addrlen) {
     }
 
     return COCO_ERROR;
+}
+
+/**
+ * coco_sendfile - 协程 sendfile（阻塞）
+ *
+ * @param out_fd 输出 fd（通常是 socket）
+ * @param in_fd 输入 fd（通常是文件）
+ * @param offset 文件偏移指针
+ * @param count 传输字节数
+ * @return 实际传输字节数，负数错误码
+ */
+ssize_t coco_sendfile(int out_fd, int in_fd, off_t *offset, size_t count) {
+    coco_sched_t *sched = g_current_sched;
+    coco_coro_t *coro = g_current_coro;
+
+    ENSURE_IN_CORO_RET(COCO_ERROR_INVALID);
+
+    if (out_fd < 0 || in_fd < 0 || !offset) {
+        return COCO_ERROR_INVALID;
+    }
+
+    coco_poll_set_nonblock(out_fd);
+
+    /* 检查是否在多线程模式下 */
+    coco_global_sched_t *gs = coco_global_get();
+    coco_netpoller_t *np = gs ? gs->netpoller : NULL;
+
+    size_t total = 0;
+    while (total < count) {
+        /* 检查取消状态 */
+        if (coro->cancelled) {
+            return COCO_ERROR_CANCELLED;
+        }
+
+#ifdef __linux__
+        ssize_t n = sendfile(out_fd, in_fd, offset, count - total);
+#else
+        /* 非 Linux 平台使用 read/write 回退 */
+        char buf[8192];
+        size_t to_read = count - total;
+        if (to_read > sizeof(buf)) {
+            to_read = sizeof(buf);
+        }
+
+        ssize_t r = pread(in_fd, buf, to_read, *offset);
+        if (r < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* 等待输入 fd 可读 */
+                if (np) {
+                    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+                    coco_netpoller_register(np, in_fd, 0x01, coro, 0);
+                    coco_yield();
+                    coco_netpoller_unregister(np, in_fd, 0x01);
+                } else {
+                    coco_poll_register(sched, in_fd, coro, POLLIN);
+                    coco_yield();
+                    coco_poll_unregister(sched, in_fd);
+                }
+                continue;
+            } else {
+                return COCO_ERROR;
+            }
+        } else if (r == 0) {
+            break;
+        }
+
+        size_t written = 0;
+        while (written < (size_t)r) {
+            ssize_t w = write(out_fd, buf + written, (size_t)r - written);
+            if (w < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    if (np) {
+                        atomic_store_explicit(&coro->state, COCO_STATE_WAITING,
+                                              memory_order_release);
+                        coco_netpoller_register(np, out_fd, 0x02, coro, 0);
+                        coco_yield();
+                        coco_netpoller_unregister(np, out_fd, 0x02);
+                    } else {
+                        coco_poll_register(sched, out_fd, coro, POLLOUT);
+                        coco_yield();
+                        coco_poll_unregister(sched, out_fd);
+                    }
+                } else {
+                    return COCO_ERROR;
+                }
+            } else if (w == 0) {
+                break;
+            } else {
+                written += (size_t)w;
+            }
+        }
+
+        *offset += (off_t)written;
+        n = (ssize_t)written;
+#endif
+
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* 等待输出 fd 可写 */
+                if (np) {
+                    atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
+                    coco_netpoller_register(np, out_fd, 0x02, coro, 0);
+                    coco_yield();
+                    coco_netpoller_unregister(np, out_fd, 0x02);
+                } else {
+                    coco_poll_register(sched, out_fd, coro, POLLOUT);
+                    coco_yield();
+                    coco_poll_unregister(sched, out_fd);
+                }
+            } else {
+                return COCO_ERROR;
+            }
+        } else if (n == 0) {
+            break;
+        } else {
+            total += (size_t)n;
+        }
+    }
+
+    return (ssize_t)total;
 }
 
 #endif /* _WIN32 */

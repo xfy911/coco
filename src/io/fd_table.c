@@ -11,6 +11,17 @@
 #define FD_TABLE_INITIAL_CAPACITY 1024
 
 /**
+ * fd_table_current - 获取当前调度器的 FD 表
+ */
+static fd_table_t *fd_table_current(void) {
+    coco_sched_t *sched = g_current_sched;
+    if (!sched) {
+        return NULL;
+    }
+    return sched->fd_table;
+}
+
+/**
  * fd_table_create - 创建 FD 表
  */
 fd_table_t *fd_table_create(uint32_t initial_capacity) {
@@ -29,6 +40,13 @@ fd_table_t *fd_table_create(uint32_t initial_capacity) {
         return NULL;
     }
 
+    ft->nonblock = (bool *)calloc(initial_capacity, sizeof(bool));
+    if (!ft->nonblock) {
+        free(ft->table);
+        free(ft);
+        return NULL;
+    }
+
     ft->capacity = initial_capacity;
     ft->max_fd = 0;
 
@@ -41,6 +59,7 @@ fd_table_t *fd_table_create(uint32_t initial_capacity) {
 void fd_table_destroy(fd_table_t *ft) {
     if (ft) {
         free(ft->table);
+        free(ft->nonblock);
         free(ft);
     }
 }
@@ -66,10 +85,18 @@ static int fd_table_ensure_capacity(fd_table_t *ft, int fd) {
         return COCO_ERROR;
     }
 
+    bool *new_nonblock = (bool *)realloc(ft->nonblock, new_capacity * sizeof(bool));
+    if (!new_nonblock) {
+        free(new_table);
+        return COCO_ERROR;
+    }
+
     /* 清零新增部分 */
     memset(new_table + ft->capacity, 0, (new_capacity - ft->capacity) * sizeof(coco_coro_t *));
+    memset(new_nonblock + ft->capacity, 0, (new_capacity - ft->capacity) * sizeof(bool));
 
     ft->table = new_table;
+    ft->nonblock = new_nonblock;
     ft->capacity = new_capacity;
 
     return COCO_OK;
@@ -118,4 +145,33 @@ void fd_table_clear(fd_table_t *ft, int fd) {
         return;
     }
     ft->table[fd] = NULL;
+}
+
+/**
+ * fd_table_is_nonblock - 查询 FD 是否已标记为非阻塞
+ *
+ * 使用当前调度器的 FD 表缓存，避免重复 fcntl。
+ */
+bool fd_table_is_nonblock(int fd) {
+    fd_table_t *ft = fd_table_current();
+    if (!ft || fd < 0 || (uint32_t)fd >= ft->capacity) {
+        return false;
+    }
+    return ft->nonblock[fd];
+}
+
+/**
+ * fd_table_mark_nonblock - 标记 FD 为非阻塞
+ */
+void fd_table_mark_nonblock(int fd) {
+    fd_table_t *ft = fd_table_current();
+    if (!ft || fd < 0) {
+        return;
+    }
+
+    if (fd_table_ensure_capacity(ft, fd) < 0) {
+        return;
+    }
+
+    ft->nonblock[fd] = true;
 }

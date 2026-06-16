@@ -26,10 +26,15 @@
  * coco_poll_set_nonblock - 设置 fd 为非阻塞模式
  */
 void coco_poll_set_nonblock(int fd) {
+    if (fd_table_is_nonblock(fd)) {
+        return;
+    }
+
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags != -1 && !(flags & O_NONBLOCK)) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
+    fd_table_mark_nonblock(fd);
 }
 
 /* === Poll 层实现 === */
@@ -135,9 +140,7 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
     }
 
     /* 设置 fd 为非阻塞 (使用缓存) */
-    if (fd < 32 && coro && (coro->nonblock_fds_set & (1U << fd))) {
-        /* 已设置，跳过 fcntl */
-    } else {
+    if (!fd_table_is_nonblock(fd)) {
         int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0) {
             return COCO_ERROR;
@@ -145,9 +148,7 @@ int coco_poll_register(coco_sched_t *sched, int fd, coco_coro_t *coro, short eve
         if (!(flags & O_NONBLOCK)) {
             fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         }
-        if (fd < 32 && coro) {
-            coro->nonblock_fds_set |= (1U << fd);
-        }
+        fd_table_mark_nonblock(fd);
     }
 
     /* 创建 kevent 结构 */
@@ -182,12 +183,7 @@ void coco_poll_unregister(coco_sched_t *sched, int fd) {
         return;
     }
 
-    /* 清除 O_NONBLOCK 缓存 */
-    coco_coro_t *coro = g_current_coro;
-    if (fd < 32 && coro) {
-        coro->nonblock_fds_set &= ~(1U << fd);
-    }
-
+    /* kqueue 注销 */
     struct kevent kev;
     EV_SET(&kev, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
     kevent(sched->poll_fd, &kev, 1, NULL, 0, NULL);
@@ -236,10 +232,6 @@ int coco_poll_wait(coco_sched_t *sched, int timeout_ms) {
 
     return n;
 }
-
-/* === 批量 I/O API (kqueue 不支持) === */
-
-COCO_BATCH_IO_STUBS
 
 /* === I/O 配置 API === */
 

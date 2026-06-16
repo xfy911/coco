@@ -343,7 +343,7 @@ static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
     pthread_mutex_unlock(&p->local_runq_lock);
     (void) coco_preempt_unblock_signal();
 
-    /* 自适应负载均衡: 当队列深度差异超过阈值时触发 */
+    /* 自适应负载均衡: 当队列深度差异超过阈值时触发均衡 */
     static _Thread_local int balance_counter = 0;
     if (++balance_counter % 50 == 0) {
         uint32_t min_size = UINT32_MAX;
