@@ -89,7 +89,7 @@ void enqueue_ready(coco_sched_t *sched, coco_coro_t *coro) {
     atomic_store_explicit(&coro->state, COCO_STATE_READY, memory_order_release);
     coro->prev = sched->ready_tails[prio];
     coro->next = NULL;
-    coro->ready_timestamp = get_timestamp_ms();
+    coro->ready_timestamp = (sched->aging_threshold_ms > 0) ? get_timestamp_ms() : 0;
 
     if (sched->ready_tails[prio]) {
         sched->ready_tails[prio]->next = coro;

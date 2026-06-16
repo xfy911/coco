@@ -10,7 +10,7 @@
 
 #define NUM_COROS  8
 #define YIELDS_PER 100000
-#define STACK_SIZE (64 * 1024)
+#define STACK_SIZE 0
 
 static volatile int yields_done = 0;
 

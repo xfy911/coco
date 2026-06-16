@@ -45,3 +45,4 @@ docs/api/
 *.coco_stackmap
 tools/coco_stack_pass/post_process.sh
 tools/coco_stack_pass/test_binary
+build_tsan/
