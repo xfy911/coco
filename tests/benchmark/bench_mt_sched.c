@@ -47,6 +47,7 @@ static double run_yield(int nproc) {
     }
     coco_global_sched_wait();
     coco_global_sched_stop();
+    coco_global_destroy();
     clock_gettime(CLOCK_MONOTONIC, &end);
     return elapsed_ns(&start, &end);
 }
@@ -63,6 +64,7 @@ static double run_cpu(int nproc) {
     }
     coco_global_sched_wait();
     coco_global_sched_stop();
+    coco_global_destroy();
     clock_gettime(CLOCK_MONOTONIC, &end);
     return elapsed_ns(&start, &end);
 }
