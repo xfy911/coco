@@ -66,7 +66,7 @@ int coco_global_sched_get_stats(coco_global_sched_stats_t *stats) {
     stats->context_switches = 0;  /* 需要从各 P 累加 */
     stats->steals_attempted = 0;  /* 暂无此统计 */
     stats->steals_succeeded = 0;  /* 暂无此统计 */
-    stats->global_queue_size = gs->global_runq_size;
+    stats->global_queue_size = atomic_load(&gs->global_runq_size);
     stats->p_count = gs->processor_count;
 
     /* 收集各 P 的统计 */

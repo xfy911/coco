@@ -44,11 +44,10 @@ typedef struct coco_global_sched {
     uint32_t processor_count;
     uint32_t processor_mask;
 
-    /* 全局运行队列 (互斥锁保护) */
-    struct coco_coro *global_runq_head;
-    struct coco_coro *global_runq_tail;
-    uint64_t global_runq_size;
-    pthread_mutex_t global_runq_lock;
+    /* 全局运行队列 (无锁栈 — Treiber Stack) */
+    _Atomic(struct coco_coro *) global_runq_head;  /* 栈顶指针 */
+    _Atomic uint64_t global_runq_size;               /* 原子计数 */
+    pthread_mutex_t global_runq_lock;                /* 保留用于 destroy/reset */
 
     /* 空闲 P 列表 */
     struct coco_processor *idle_processors;

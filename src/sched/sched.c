@@ -257,44 +257,16 @@ bool schedule_balanced(coco_global_sched_t *sched) {
         }
     }
 
-    /* Phase 2: 批量插入全局队列（不持有任何 local 锁） */
-
-    if (coco_preempt_block_signal() != COCO_OK) {
-        return false; /* 信号屏蔽失败，放弃本次负载均衡 */
-    }
-    pthread_mutex_lock(&sched->global_runq_lock);
-
+    /* Phase 2: 逐个推入无锁全局队列（不持有任何 local 锁） */
     for (coco_coro_t *g = to_move_head; g;) {
         coco_coro_t *next = g->next;
         g->next = NULL;
-        g->prev = sched->global_runq_tail;
-        if (sched->global_runq_tail) {
-            sched->global_runq_tail->next = g;
-        } else {
-            sched->global_runq_head = g;
-        }
-        sched->global_runq_tail = g;
+        g->prev = NULL;
+        coco_global_runq_put(g);
         g = next;
     }
-    sched->global_runq_size += moved_count;
 
-    pthread_mutex_unlock(&sched->global_runq_lock);
-    (void) coco_preempt_unblock_signal();
-
-    /* 唤醒空闲 worker 从全局队列窃取 */
-    uint32_t idle = atomic_load(&sched->idle_count);
-    if (idle > 0) {
-        uint32_t to_wake = (moved_count < idle) ? moved_count : idle;
-        if (coco_preempt_block_signal() != COCO_OK) {
-            return true; /* 队列已插入，唤醒失败不影响正确性 */
-        }
-        pthread_mutex_lock(&sched->idle_lock);
-        for (uint32_t i = 0; i < to_wake; i++) {
-            pthread_cond_signal(&sched->idle_cond);
-        }
-        pthread_mutex_unlock(&sched->idle_lock);
-        (void) coco_preempt_unblock_signal();
-    }
+    /* 唤醒逻辑已在 coco_global_runq_put 中处理 */
 
     return true;
 }
