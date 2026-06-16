@@ -377,8 +377,9 @@ static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
                 if (size > max_size) max_size = size;
             }
         }
-        /* 当最大队列比最小队列多 8 个协程时触发均衡 */
-        if (max_size - min_size > 8) {
+        /* 动态阈值: 基于处理器数量，最少 4，8 核以上取一半 */
+        uint32_t threshold = gs->processor_count > 8 ? gs->processor_count / 2 : 4;
+        if (max_size - min_size > threshold) {
             schedule_balanced(gs);
         }
     }
