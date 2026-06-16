@@ -166,10 +166,9 @@ int coco_global_init(uint32_t num_procs) {
         g_global_sched->processors[i]->global_sched = g_global_sched;
     }
 
-    /* 初始化全局队列 */
-    g_global_sched->global_runq_head = NULL;
-    g_global_sched->global_runq_tail = NULL;
-    g_global_sched->global_runq_size = 0;
+    /* 初始化无锁全局队列 */
+    atomic_init(&g_global_sched->global_runq_head, NULL);
+    atomic_init(&g_global_sched->global_runq_size, 0);
     pthread_mutex_init(&g_global_sched->global_runq_lock, NULL);
 
     /* 初始化空闲列表 */
@@ -221,35 +220,30 @@ coco_global_sched_t *coco_global_get(void) {
 }
 
 /**
- * 全局运行队列入队
+ * 全局运行队列入队 (无锁 Treiber Stack)
  */
 int coco_global_runq_put(struct coco_coro *g) {
     if (!g_global_sched || !g) {
         return COCO_ERROR;
     }
 
-    atomic_store_explicit(&g->state, COCO_STATE_READY, memory_order_release);  /* 设置就绪状态 */
+    atomic_store_explicit(&g->state, COCO_STATE_READY, memory_order_release);
 
-    coco_preempt_block_signal();
-    pthread_mutex_lock(&g_global_sched->global_runq_lock);
+    g->prev = NULL;
 
-    g->next = NULL;
-    g->prev = g_global_sched->global_runq_tail;
+    coco_coro_t *old_head;
+    do {
+        old_head = atomic_load_explicit(&g_global_sched->global_runq_head, memory_order_relaxed);
+        g->next = old_head;
+    } while (!atomic_compare_exchange_weak_explicit(
+        &g_global_sched->global_runq_head,
+        &old_head, g,
+        memory_order_release,
+        memory_order_relaxed));
 
-    if (g_global_sched->global_runq_tail) {
-        g_global_sched->global_runq_tail->next = g;
-    } else {
-        g_global_sched->global_runq_head = g;
-    }
-    g_global_sched->global_runq_tail = g;
-    g_global_sched->global_runq_size++;
-    uint64_t runq_size_after_add = g_global_sched->global_runq_size;
+    uint64_t runq_size_after_add = atomic_fetch_add_explicit(&g_global_sched->global_runq_size, 1, memory_order_relaxed) + 1;
 
-    pthread_mutex_unlock(&g_global_sched->global_runq_lock);
-    coco_preempt_unblock_signal();
-
-    /* 按需唤醒空闲线程: 根据全局队列长度和空闲 worker 数量决定唤醒数量
-     * 避免 thundering herd: 只唤醒最少数量的空闲线程 */
+    /* 按需唤醒空闲线程 */
     uint32_t idle = atomic_load(&g_global_sched->idle_count);
     if (idle > 0) {
         uint32_t to_wake = (uint32_t)(runq_size_after_add < (uint64_t)idle ? runq_size_after_add : idle);
@@ -267,38 +261,30 @@ int coco_global_runq_put(struct coco_coro *g) {
 }
 
 /**
- * 全局运行队列出队
+ * 全局运行队列出队 (无锁 Treiber Stack)
  */
 struct coco_coro *coco_global_runq_get(void) {
     if (!g_global_sched) {
         return NULL;
     }
 
-    coco_preempt_block_signal();
-    pthread_mutex_lock(&g_global_sched->global_runq_lock);
+    coco_coro_t *old_head;
+    do {
+        old_head = atomic_load_explicit(&g_global_sched->global_runq_head, memory_order_acquire);
+        if (!old_head) {
+            return NULL;
+        }
+    } while (!atomic_compare_exchange_weak_explicit(
+        &g_global_sched->global_runq_head,
+        &old_head, old_head->next,
+        memory_order_acquire,
+        memory_order_relaxed));
 
-    if (!g_global_sched->global_runq_head) {
-        pthread_mutex_unlock(&g_global_sched->global_runq_lock);
-        coco_preempt_unblock_signal();
-        return NULL;
-    }
+    atomic_fetch_sub_explicit(&g_global_sched->global_runq_size, 1, memory_order_relaxed);
 
-    struct coco_coro *g = g_global_sched->global_runq_head;
-    g_global_sched->global_runq_head = g->next;
-
-    if (g_global_sched->global_runq_head) {
-        g_global_sched->global_runq_head->prev = NULL;
-    } else {
-        g_global_sched->global_runq_tail = NULL;
-    }
-
-    g->next = NULL;
-    g->prev = NULL;
-    g_global_sched->global_runq_size--;
-
-    pthread_mutex_unlock(&g_global_sched->global_runq_lock);
-    coco_preempt_unblock_signal();
-    return g;
+    old_head->next = NULL;
+    old_head->prev = NULL;
+    return old_head;
 }
 
 /**
@@ -308,14 +294,7 @@ uint64_t coco_global_runq_size(void) {
     if (!g_global_sched) {
         return 0;
     }
-
-    coco_preempt_block_signal();
-    pthread_mutex_lock(&g_global_sched->global_runq_lock);
-    uint64_t size = g_global_sched->global_runq_size;
-    pthread_mutex_unlock(&g_global_sched->global_runq_lock);
-    coco_preempt_unblock_signal();
-
-    return size;
+    return atomic_load_explicit(&g_global_sched->global_runq_size, memory_order_relaxed);
 }
 
 /**
@@ -377,8 +356,9 @@ static void handle_coro_done(coco_coro_t *coro, coco_processor_t *p,
                 if (size > max_size) max_size = size;
             }
         }
-        /* 当最大队列比最小队列多 8 个协程时触发均衡 */
-        if (max_size - min_size > 8) {
+        /* 动态阈值: 基于处理器数量，最少 4，8 核以上取一半 */
+        uint32_t threshold = gs->processor_count > 8 ? gs->processor_count / 2 : 4;
+        if (max_size - min_size > threshold) {
             schedule_balanced(gs);
         }
     }
@@ -645,7 +625,7 @@ int coco_global_sched_stop(void) {
     /* 清空全局队列 */
     coco_preempt_block_signal();
     pthread_mutex_lock(&gs->global_runq_lock);
-    coco_coro_t *g = gs->global_runq_head;
+    coco_coro_t *g = atomic_load(&gs->global_runq_head);
     while (g) {
         coco_coro_t *next = g->next;
         if (g->stack_base) {
@@ -659,9 +639,8 @@ int coco_global_sched_stop(void) {
         free(g);
         g = next;
     }
-    gs->global_runq_head = NULL;
-    gs->global_runq_tail = NULL;
-    gs->global_runq_size = 0;
+    atomic_store(&gs->global_runq_head, NULL);
+    atomic_store(&gs->global_runq_size, 0);
     pthread_mutex_unlock(&gs->global_runq_lock);
     coco_preempt_unblock_signal();
 

@@ -33,13 +33,13 @@ typedef struct stack_pool_multi {
     uint32_t limits[STACK_POOL_MULTI_NUM_CLASSES];                 /* 上限 */
     stack_zero_mode_t zero_mode;                                   /* 清零模式 */
 
-    /* 统计信息 */
-    uint64_t total_allocs;      /* 总分配次数 */
-    uint64_t total_frees;       /* 总释放次数 */
-    uint64_t pool_hits;         /* 池命中次数 */
-    uint64_t pool_misses;       /* 池未命中次数 */
+    /* 统计信息 — 原子变量，无需锁 */
+    _Atomic uint64_t total_allocs;      /* 总分配次数 */
+    _Atomic uint64_t total_frees;       /* 总释放次数 */
+    _Atomic uint64_t pool_hits;         /* 池命中次数 */
+    _Atomic uint64_t pool_misses;       /* 池未命中次数 */
 
-    pthread_mutex_t lock;       /* 保护所有字段的互斥锁 */
+    pthread_mutex_t locks[STACK_POOL_MULTI_NUM_CLASSES];  /* 每类一把锁 */
 } stack_pool_multi_t;
 
 /* API */

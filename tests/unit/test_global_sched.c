@@ -121,15 +121,15 @@ static void test_global_queue(void) {
     TEST_ASSERT(ret == 0, "入队 coro3 成功");
     TEST_ASSERT(coco_global_runq_size() == 3, "队列大小为 3");
 
-    /* 出队 (FIFO 顺序) */
+    /* 出队 (LIFO 顺序 — Treiber Stack) */
     coco_coro_t *g = coco_global_runq_get();
-    TEST_ASSERT(g != NULL && g->id == 1, "出队 coro1 成功");
+    TEST_ASSERT(g != NULL && g->id == 3, "出队 coro3 成功 (栈顶)");
 
     g = coco_global_runq_get();
     TEST_ASSERT(g != NULL && g->id == 2, "出队 coro2 成功");
 
     g = coco_global_runq_get();
-    TEST_ASSERT(g != NULL && g->id == 3, "出队 coro3 成功");
+    TEST_ASSERT(g != NULL && g->id == 1, "出队 coro1 成功 (栈底)");
 
     TEST_ASSERT(coco_global_runq_size() == 0, "队列大小为 0");
 

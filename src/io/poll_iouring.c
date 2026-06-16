@@ -66,9 +66,10 @@ typedef struct coco_iouring {
     bool sqpoll_enabled;            /* SQPOLL 是否启用 */
     uint32_t entries;               /* 队列深度 */
 
-    /* 请求池 */
+    /* 请求池 — 动态分配，与 entries 对齐 */
     iouring_req_t *req_freelist;    /* 空闲请求链表 */
-    iouring_req_t req_pool[256];    /* 预分配请求池 */
+    iouring_req_t *req_pool;        /* 动态请求池 */
+    uint32_t req_pool_size;         /* 池大小 */
 
     /* 统计 */
     uint64_t submit_count;          /* 提交次数 */
@@ -78,21 +79,42 @@ typedef struct coco_iouring {
 /* 线程局部 io_uring 上下文 */
 static _Thread_local coco_iouring_t *g_iouring = NULL;
 
+/* 动态扩容请求池 */
+static int req_pool_grow(coco_iouring_t *iou) {
+    uint32_t new_size = iou->req_pool_size ? iou->req_pool_size * 2 : iou->entries;
+    iouring_req_t *new_pool = realloc(iou->req_pool, new_size * sizeof(iouring_req_t));
+    if (!new_pool) return COCO_ERROR;
+
+    /* 新分配的节点加入空闲链表 */
+    for (uint32_t i = iou->req_pool_size; i < new_size; i++) {
+        memset(&new_pool[i], 0, sizeof(iouring_req_t));
+        new_pool[i].next = iou->req_freelist;
+        iou->req_freelist = &new_pool[i];
+    }
+
+    iou->req_pool = new_pool;
+    iou->req_pool_size = new_size;
+    return COCO_OK;
+}
+
 /* 从池中分配请求 */
 static iouring_req_t *req_alloc(coco_iouring_t *iou) {
-    if (iou && iou->req_freelist) {
-        iouring_req_t *req = iou->req_freelist;
-        iou->req_freelist = req->next;
-        memset(req, 0, sizeof(iouring_req_t));
-        return req;
+    if (!iou) return calloc(1, sizeof(iouring_req_t));
+    if (!iou->req_freelist) {
+        if (req_pool_grow(iou) != COCO_OK) {
+            return calloc(1, sizeof(iouring_req_t));
+        }
     }
-    return calloc(1, sizeof(iouring_req_t));
+    iouring_req_t *req = iou->req_freelist;
+    iou->req_freelist = req->next;
+    memset(req, 0, sizeof(iouring_req_t));
+    return req;
 }
 
 /* 归还请求到池 */
 static void req_free(coco_iouring_t *iou, iouring_req_t *req) {
     if (!req) return;
-    if (iou && req >= &iou->req_pool[0] && req <= &iou->req_pool[255]) {
+    if (iou && iou->req_pool && req >= iou->req_pool && req < iou->req_pool + iou->req_pool_size) {
         req->next = iou->req_freelist;
         iou->req_freelist = req;
     } else {
@@ -131,10 +153,10 @@ int coco_poll_init_iouring(coco_sched_t *sched) {
 
     iou->entries = opts.queue_depth > 0 ? opts.queue_depth : IOURING_ENTRIES;
 
-    /* 初始化请求池 */
-    for (int i = 0; i < 256; i++) {
-        iou->req_pool[i].next = iou->req_freelist;
-        iou->req_freelist = &iou->req_pool[i];
+    /* 动态请求池：初始大小 = entries */
+    if (req_pool_grow(iou) != COCO_OK) {
+        free(iou);
+        return COCO_ERROR;
     }
 
     /* 尝试启用 SQPOLL */
@@ -161,6 +183,7 @@ int coco_poll_init_iouring(coco_sched_t *sched) {
             sched->fd_table = fd_table_create(1024);
             if (!sched->fd_table) {
                 io_uring_queue_exit(&iou->ring);
+                free(iou->req_pool);
                 free(iou);
                 return COCO_ERROR;
             }
@@ -172,6 +195,7 @@ int coco_poll_init_iouring(coco_sched_t *sched) {
 
     /* 默认模式初始化 */
     if (io_uring_queue_init(iou->entries, &iou->ring, 0) < 0) {
+        free(iou->req_pool);
         free(iou);
         return COCO_ERROR;
     }
@@ -185,6 +209,7 @@ int coco_poll_init_iouring(coco_sched_t *sched) {
     sched->fd_table = fd_table_create(1024);
     if (!sched->fd_table) {
         io_uring_queue_exit(&iou->ring);
+        free(iou->req_pool);
         free(iou);
         return COCO_ERROR;
     }
@@ -200,6 +225,7 @@ void coco_poll_cleanup_iouring(coco_sched_t *sched) {
 
     coco_iouring_t *iou = sched->iouring;
     io_uring_queue_exit(&iou->ring);
+    free(iou->req_pool);
     free(iou);
     sched->iouring = NULL;
     g_iouring = NULL;
