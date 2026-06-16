@@ -26,6 +26,9 @@
 /* 线程局部窃取退避计数器 */
 static _Thread_local uint32_t tl_steal_fail_count = 0;
 
+/* 前向声明: runq_put_batch 定义在 runq.c 中 */
+int runq_put_batch(coco_processor_t *p, coco_coro_t *head, int count);
+
 /* 查找可运行协程 */
 coco_coro_t *find_runnable(coco_processor_t *p) {
     if (!p) {
@@ -96,14 +99,14 @@ coco_coro_t *find_runnable(coco_processor_t *p) {
             if (next) {
                 g->next = NULL;
                 g->prev = NULL;
+                int count = 0;
+                coco_coro_t *batch = next;
                 while (next) {
-                    coco_coro_t *n = next->next;
-                    next->next = NULL;
-                    next->prev = NULL;
                     coro_migrate_prepare(from, next);
-                    runq_put(p, next);
-                    next = n;
+                    count++;
+                    next = next->next;
                 }
+                runq_put_batch(p, batch, count);
             }
             return g;
         }

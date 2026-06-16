@@ -220,12 +220,15 @@ int coco_poll_register_iouring(coco_sched_t *sched, int fd, coco_coro_t *coro, s
 
     coco_iouring_t *iou = sched->iouring;
 
-    /* 设置 fd 为非阻塞 */
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) {
-        return COCO_ERROR;
+    /* 设置 fd 为非阻塞 (使用缓存) */
+    if (!fd_table_is_nonblock(fd)) {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags < 0) {
+            return COCO_ERROR;
+        }
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        fd_table_mark_nonblock(fd);
     }
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
     /* 分配请求 */
     iouring_req_t *req = req_alloc(iou);

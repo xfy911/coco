@@ -177,6 +177,7 @@ struct coco_coro {
     size_t stack_used;
     int hot_slot_idx;
     coco_hot_node_t hot_node;
+    uint32_t hot_yield_count;
     uint64_t last_run_tick;
     bool is_exclusive;
 
@@ -206,6 +207,7 @@ struct coco_timer {
 /* FD 表结构 */
 typedef struct fd_table {
     coco_coro_t **table;      /* FD 到协程的映射数组 */
+    bool *nonblock;           /* FD 非阻塞状态缓存 */
     uint32_t capacity;        /* 当前容量 */
     uint32_t max_fd;          /* 已注册的最大 FD 值 */
 } fd_table_t;
@@ -378,6 +380,9 @@ void fd_table_destroy(fd_table_t *ft);
 coco_coro_t *fd_table_get(fd_table_t *ft, int fd);
 int fd_table_set(fd_table_t *ft, int fd, coco_coro_t *coro);
 void fd_table_clear(fd_table_t *ft, int fd);
+
+bool fd_table_is_nonblock(int fd);
+void fd_table_mark_nonblock(int fd);
 
 /* Channel select cleanup (for coco_destroy) */
 void coco_select_cleanup(coco_coro_t *coro);

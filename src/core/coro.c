@@ -7,6 +7,7 @@
 #include "hot_stack.h"
 #include "../../include/coco_stack_map.h"
 #include "../sched/global_sched.h"
+#include "../sched/runq.h"
 #include "stack_pool_multi.h"
 #include "cls.h"
 #include "trace.h"
@@ -746,7 +747,9 @@ int coco_yield(void) {
                 coro->stack_used = used;
             }
         }
-        hot_lru_move_to_head(sched, &coro->hot_node);
+        if (++coro->hot_yield_count % 16 == 0) {
+            hot_lru_move_to_head(sched, &coro->hot_node);
+        }
     }
 
     if (atomic_load_explicit(&coro->state, memory_order_acquire) == COCO_STATE_RUNNING) {
@@ -754,8 +757,13 @@ int coco_yield(void) {
         coco_global_sched_t *gs = coco_global_get();
 
         if (gs && gs->processor_count > 0) {
-            /* 多线程模式：放入全局队列 */
-            coco_global_runq_put(coro);
+            /* 多线程模式：优先放入当前 P 的本地队列 */
+            coco_processor_t *p = get_current_p();
+            if (p && runq_put(p, coro) == 0) {
+                /* 成功放入本地队列 */
+            } else {
+                coco_global_runq_put(coro);  /* 本地队列满或不在 worker 中 */
+            }
         } else {
             /* 单线程模式：放入本地队列 */
             enqueue_ready(sched, coro);

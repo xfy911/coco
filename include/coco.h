@@ -630,6 +630,31 @@ int COCO_API coco_channel_send(coco_channel_t *ch, void *value);
 int COCO_API coco_channel_recv(coco_channel_t *ch, void **value);
 
 /**
+ * @brief Send multiple values through the channel (blocking)
+ * @param ch Channel pointer
+ * @param vals Array of values to send
+ * @param n Number of values to send
+ * @return Number of values sent, or negative error code
+ *
+ * For buffered channels, writes as many values as possible before yielding.
+ * For unbuffered channels, blocks until all values are sent.
+ */
+int COCO_API coco_channel_send_batch(coco_channel_t *ch, void **vals, int n);
+
+/**
+ * @brief Receive multiple values from the channel (blocking)
+ * @param ch Channel pointer
+ * @param vals Array to receive the values
+ * @param n Maximum number of values to receive
+ * @param received Output: number of values actually received
+ * @return COCO_OK on success, COCO_ERROR_CHANNEL_CLOSED if closed and empty
+ *
+ * For buffered channels, reads as many values as possible before yielding.
+ * For unbuffered channels, blocks until values are available.
+ */
+int COCO_API coco_channel_recv_batch(coco_channel_t *ch, void **vals, int n, int *received);
+
+/**
  * @brief Close a channel
  * @param ch Channel pointer
  *
@@ -736,6 +761,18 @@ int COCO_API coco_accept(int fd, void *addr, size_t *addrlen);
  * Yields to the scheduler while connecting.
  */
 int COCO_API coco_connect(int fd, const void *addr, size_t addrlen);
+
+/**
+ * @brief Send file data between file descriptors (blocking for coroutines)
+ * @param out_fd Output file descriptor (usually a socket)
+ * @param in_fd Input file descriptor (usually a regular file)
+ * @param offset File offset pointer (updated on success)
+ * @param count Number of bytes to transfer
+ * @return Bytes transferred, or negative error code
+ *
+ * On Linux uses sendfile(); on other platforms falls back to read/write.
+ */
+ssize_t COCO_API coco_sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
 
 /**
  * @brief Sleep for a duration

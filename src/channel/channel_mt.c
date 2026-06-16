@@ -13,6 +13,75 @@
 
 /* 外部全局变量 */
 
+/* === 无锁 MPMC Ring Buffer 实现 === */
+
+static int mpmc_ring_enqueue(mpmc_ring_t *ring, void *value, uint32_t capacity) {
+    uint32_t tail = atomic_load_explicit(&ring->tail, memory_order_relaxed);
+    uint32_t head = atomic_load_explicit(&ring->head, memory_order_acquire);
+
+    if ((uint32_t)(tail - head) >= capacity) {
+        return -1; /* full */
+    }
+
+    uint32_t new_tail = tail + 1;
+    if (!atomic_compare_exchange_strong_explicit(
+            &ring->tail, &tail, new_tail,
+            memory_order_release, memory_order_relaxed)) {
+        return -1; /* CAS failed */
+    }
+
+    atomic_store_explicit(&ring->buffer[tail % capacity], value, memory_order_release);
+    return 0;
+}
+
+static int mpmc_ring_dequeue(mpmc_ring_t *ring, void **value, uint32_t capacity) {
+    uint32_t head = atomic_load_explicit(&ring->head, memory_order_relaxed);
+    uint32_t tail = atomic_load_explicit(&ring->tail, memory_order_acquire);
+
+    if (head == tail) {
+        return -1; /* empty */
+    }
+
+    uint32_t new_head = head + 1;
+    if (!atomic_compare_exchange_strong_explicit(
+            &ring->head, &head, new_head,
+            memory_order_release, memory_order_relaxed)) {
+        return -1; /* CAS failed */
+    }
+
+    *value = atomic_load_explicit(&ring->buffer[head % capacity], memory_order_acquire);
+    return 0;
+}
+
+/* mutex 保护下的 mpmc_ring 操作（不需要 CAS） */
+static int mpmc_ring_enqueue_locked(mpmc_ring_t *ring, void *value, uint32_t capacity) {
+    uint32_t tail = atomic_load_explicit(&ring->tail, memory_order_relaxed);
+    uint32_t head = atomic_load_explicit(&ring->head, memory_order_relaxed);
+    if ((uint32_t)(tail - head) >= capacity) {
+        return -1;
+    }
+    atomic_store_explicit(&ring->buffer[tail % capacity], value, memory_order_relaxed);
+    atomic_store_explicit(&ring->tail, tail + 1, memory_order_release);
+    return 0;
+}
+
+static int mpmc_ring_dequeue_locked(mpmc_ring_t *ring, void **value, uint32_t capacity) {
+    uint32_t head = atomic_load_explicit(&ring->head, memory_order_relaxed);
+    uint32_t tail = atomic_load_explicit(&ring->tail, memory_order_relaxed);
+    if (head == tail) {
+        return -1;
+    }
+    *value = atomic_load_explicit(&ring->buffer[head % capacity], memory_order_relaxed);
+    atomic_store_explicit(&ring->head, head + 1, memory_order_release);
+    return 0;
+}
+/* 获取 mpmc_ring 当前元素数量 */
+static uint32_t mpmc_ring_count(mpmc_ring_t *ring) {
+    uint32_t head = atomic_load_explicit(&ring->head, memory_order_acquire);
+    uint32_t tail = atomic_load_explicit(&ring->tail, memory_order_acquire);
+    return tail - head;
+}
+
 
 /* 从 select 等待队列头部取出 select_node */
 static coco_select_node_t *dequeue_select_node_mt(coco_select_node_t **head,
@@ -65,14 +134,17 @@ coco_channel_mt_t *coco_channel_mt_create(size_t capacity) {
     }
 
     if (capacity > 0) {
-        ch->buffer = calloc(capacity, sizeof(void*));
-        if (!ch->buffer) {
+        /* 分配无锁 MPMC Ring Buffer */
+        ch->mpmc_ring = calloc(1, sizeof(mpmc_ring_t) + capacity * sizeof(void*));
+        if (!ch->mpmc_ring) {
             pthread_cond_destroy(&ch->recv_cond);
             pthread_cond_destroy(&ch->send_cond);
             pthread_mutex_destroy(&ch->lock);
             free(ch);
             return NULL;
         }
+        atomic_init(&ch->mpmc_ring->head, 0);
+        atomic_init(&ch->mpmc_ring->tail, 0);
     }
 
     return ch;
@@ -136,8 +208,8 @@ void coco_channel_mt_destroy(coco_channel_mt_t *ch) {
         }
     }
 
-    if (ch->buffer) {
-        free(ch->buffer);
+    if (ch->mpmc_ring) {
+        free(ch->mpmc_ring);
     }
 
     pthread_mutex_unlock(&ch->lock);
@@ -177,11 +249,17 @@ int coco_channel_mt_send(coco_channel_mt_t *ch, void *value) {
         return COCO_OK;
     }
 
-    /* 有缓冲 channel: 尝试放入缓冲区 */
-    if (ch->capacity > 0 && ch->count < ch->capacity) {
-        ch->buffer[ch->tail] = value;
-        ch->tail = (ch->tail + 1) % ch->capacity;
-        ch->count++;
+    /* 有缓冲 channel: 尝试放入无锁 ring buffer（可能在拿锁期间有空位了） */
+    if (ch->mpmc_ring && mpmc_ring_enqueue(ch->mpmc_ring, value, ch->capacity) == 0) {
+        pthread_cond_signal(&ch->recv_cond);
+        pthread_mutex_unlock(&ch->lock);
+        coco_preempt_unblock_signal();
+        return COCO_OK;
+    }
+
+    /* 有缓冲 channel: 尝试放入 mutex 保护的缓冲区 */
+    if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) < ch->capacity) {
+        mpmc_ring_enqueue_locked(ch->mpmc_ring, value, ch->capacity);
         pthread_cond_signal(&ch->recv_cond);
         pthread_mutex_unlock(&ch->lock);
         coco_preempt_unblock_signal();
@@ -234,24 +312,19 @@ int coco_channel_mt_recv(coco_channel_mt_t *ch, void **value) {
     coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
-    if (ch->closed && ch->count == 0 && !ch->send_wait_head) {
+    if (ch->closed && mpmc_ring_count(ch->mpmc_ring) == 0 && !ch->send_wait_head) {
         pthread_mutex_unlock(&ch->lock);
         coco_preempt_unblock_signal();
         return COCO_ERROR_CHANNEL_CLOSED;
     }
 
-    /* 有缓冲 channel: 尝试从缓冲区取 */
-    if (ch->capacity > 0 && ch->count > 0) {
-        *value = ch->buffer[ch->head];
-        ch->head = (ch->head + 1) % ch->capacity;
-        ch->count--;
-
+    /* 有缓冲 channel: 尝试从 mutex 保护的缓冲区取 */
+    if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) > 0) {
+        mpmc_ring_dequeue_locked(ch->mpmc_ring, value, ch->capacity);
         /* 缓冲区有空间，唤醒发送者 */
         coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
         if (send_waiter) {
-            ch->buffer[ch->tail] = send_waiter->wait_node.value;
-            ch->tail = (ch->tail + 1) % ch->capacity;
-            ch->count++;
+            mpmc_ring_enqueue_locked(ch->mpmc_ring, send_waiter->wait_node.value, ch->capacity);
             pthread_mutex_unlock(&ch->lock);
             coco_preempt_unblock_signal();
             schedule_ready(send_waiter);
@@ -333,10 +406,8 @@ int coco_channel_mt_send_thread(coco_channel_mt_t *ch, void *value) {
         }
 
         /* 有缓冲 channel: 尝试放入缓冲区 */
-        if (ch->capacity > 0 && ch->count < ch->capacity) {
-            ch->buffer[ch->tail] = value;
-            ch->tail = (ch->tail + 1) % ch->capacity;
-            ch->count++;
+        if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) < ch->capacity) {
+            mpmc_ring_enqueue_locked(ch->mpmc_ring, value, ch->capacity);
             pthread_cond_signal(&ch->recv_cond);
             pthread_mutex_unlock(&ch->lock);
             coco_preempt_unblock_signal();
@@ -363,18 +434,13 @@ int coco_channel_mt_recv_thread(coco_channel_mt_t *ch, void **value) {
     coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
-    while (!ch->closed || ch->count > 0 || ch->send_wait_head) {
+    while (!ch->closed || mpmc_ring_count(ch->mpmc_ring) > 0 || ch->send_wait_head) {
         /* 有缓冲 channel: 尝试从缓冲区取 */
-        if (ch->capacity > 0 && ch->count > 0) {
-            *value = ch->buffer[ch->head];
-            ch->head = (ch->head + 1) % ch->capacity;
-            ch->count--;
-
+        if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) > 0) {
+            mpmc_ring_dequeue_locked(ch->mpmc_ring, value, ch->capacity);
             coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
             if (send_waiter) {
-                ch->buffer[ch->tail] = send_waiter->wait_node.value;
-                ch->tail = (ch->tail + 1) % ch->capacity;
-                ch->count++;
+                mpmc_ring_enqueue_locked(ch->mpmc_ring, send_waiter->wait_node.value, ch->capacity);
                 pthread_mutex_unlock(&ch->lock);
                 coco_preempt_unblock_signal();
                 schedule_ready(send_waiter);
@@ -414,6 +480,12 @@ int coco_channel_mt_try_send(coco_channel_mt_t *ch, void *value) {
         return COCO_ERROR;
     }
 
+    /* 快速路径: 尝试无锁 MPMC ring buffer */
+    if (ch->mpmc_ring && mpmc_ring_enqueue(ch->mpmc_ring, value, ch->capacity) == 0) {
+        pthread_cond_signal(&ch->recv_cond);
+        return COCO_OK;
+    }
+
     coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
@@ -424,10 +496,8 @@ int coco_channel_mt_try_send(coco_channel_mt_t *ch, void *value) {
     }
 
     /* 有空间则发送 */
-    if (ch->capacity > 0 && ch->count < ch->capacity) {
-        ch->buffer[ch->tail] = value;
-        ch->tail = (ch->tail + 1) % ch->capacity;
-        ch->count++;
+    if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) < ch->capacity) {
+        mpmc_ring_enqueue_locked(ch->mpmc_ring, value, ch->capacity);
         pthread_cond_signal(&ch->recv_cond);
         pthread_mutex_unlock(&ch->lock);
         coco_preempt_unblock_signal();
@@ -457,14 +527,18 @@ int coco_channel_mt_try_recv(coco_channel_mt_t *ch, void **value) {
         return COCO_ERROR;
     }
 
+    /* 快速路径: 尝试无锁 MPMC ring buffer */
+    if (ch->mpmc_ring && mpmc_ring_dequeue(ch->mpmc_ring, value, ch->capacity) == 0) {
+        pthread_cond_signal(&ch->send_cond);
+        return COCO_OK;
+    }
+
     coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
 
     /* 有数据则接收 */
-    if (ch->capacity > 0 && ch->count > 0) {
-        *value = ch->buffer[ch->head];
-        ch->head = (ch->head + 1) % ch->capacity;
-        ch->count--;
+    if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) > 0) {
+        mpmc_ring_dequeue_locked(ch->mpmc_ring, value, ch->capacity);
         pthread_cond_signal(&ch->send_cond);
         pthread_mutex_unlock(&ch->lock);
         coco_preempt_unblock_signal();
@@ -546,7 +620,7 @@ size_t coco_channel_mt_len(coco_channel_mt_t *ch) {
 
     coco_preempt_block_signal();
     pthread_mutex_lock(&ch->lock);
-    size_t len = ch->count;
+    size_t len = ch->mpmc_ring ? mpmc_ring_count(ch->mpmc_ring) : 0;
     pthread_mutex_unlock(&ch->lock);
     coco_preempt_unblock_signal();
 
@@ -701,18 +775,16 @@ int coco_channel_mt_select(coco_select_case_t *cases, int ncases,
 
         if (cases[i].dir == COCO_SELECT_RECV) {
             if (pthread_mutex_trylock(&ch->lock) == 0) {
-                if (ch->capacity > 0 && ch->count > 0) {
-                    void *val = ch->buffer[ch->head];
-                    ch->head = (ch->head + 1) % ch->capacity;
-                    ch->count--;
+                if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) > 0) {
+                    void *val; mpmc_ring_dequeue_locked(ch->mpmc_ring, &val, ch->capacity);
+                    
+                    
                     *(void **)cases[i].val = val;
                     cases[i].result = COCO_OK;
                     /* 尝试唤醒等待的发送者 */
                     coco_coro_t *send_waiter = dequeue_wait_coro(&ch->send_wait_head, &ch->send_wait_tail);
                     if (send_waiter) {
-                        ch->buffer[ch->tail] = send_waiter->wait_node.value;
-                        ch->tail = (ch->tail + 1) % ch->capacity;
-                        ch->count++;
+                        mpmc_ring_enqueue_locked(ch->mpmc_ring, send_waiter->wait_node.value, ch->capacity);
                         pthread_mutex_unlock(&ch->lock);
                         schedule_ready(send_waiter);
                     } else {
@@ -740,17 +812,15 @@ int coco_channel_mt_select(coco_select_case_t *cases, int ncases,
                     pthread_mutex_unlock(&ch->lock);
                     return i;
                 }
-                if (ch->capacity > 0 && ch->count < ch->capacity) {
-                    ch->buffer[ch->tail] = cases[i].val;
-                    ch->tail = (ch->tail + 1) % ch->capacity;
-                    ch->count++;
+                if (ch->capacity > 0 && mpmc_ring_count(ch->mpmc_ring) < ch->capacity) {
+                    mpmc_ring_enqueue_locked(ch->mpmc_ring, cases[i].val, ch->capacity);
                     cases[i].result = COCO_OK;
                     /* 尝试唤醒等待的接收者 */
                     coco_coro_t *recv_waiter = dequeue_wait_coro(&ch->recv_wait_head, &ch->recv_wait_tail);
                     if (recv_waiter) {
-                        recv_waiter->wait_node.value = ch->buffer[ch->head];
-                        ch->head = (ch->head + 1) % ch->capacity;
-                        ch->count--;
+                        mpmc_ring_dequeue_locked(ch->mpmc_ring, &recv_waiter->wait_node.value, ch->capacity);
+                        
+                        
                         pthread_mutex_unlock(&ch->lock);
                         schedule_ready(recv_waiter);
                     } else {
