@@ -327,6 +327,7 @@ if(COCO_BUILD_TESTS)
         bench_switch
         bench_channel
         bench_io
+        bench_io_4k
         bench_io_backend
         bench_preempt
         bench_stack
