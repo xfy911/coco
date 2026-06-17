@@ -21,6 +21,9 @@
 
 /* 外部全局变量（TLS） */
 
+/* 多线程模式检测 — 用于区分单线程/多线程 io_uring 提交策略 */
+extern struct coco_global_sched *coco_global_get(void);
+
 /* io_uring 配置 */
 #define IOURING_ENTRIES     256   /* 默认队列深度 */
 #define IOURING_SQPOLL_IDLE 1000  /* SQPOLL 空闲超时 (ms) */
@@ -454,8 +457,10 @@ int coco_file_open(const char *path, int flags, mode_t mode) {
 
     atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
-    /* 提交并等待 */
-    io_uring_submit(&iou->ring);
+    /* 提交并等待 — 多线程模式需立即提交，单线程模式由 poll_wait 统一批量提交 */
+    if (coco_global_get() != NULL) {
+        io_uring_submit(&iou->ring);
+    }
     coco_yield();
 
     int result = (int)req->result;
@@ -502,8 +507,10 @@ ssize_t coco_file_read(int fd, void *buf, size_t count) {
 
     atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
-    /* 提交并等待 */
-    io_uring_submit(&iou->ring);
+    /* 提交并等待 — 多线程模式需立即提交，单线程模式由 poll_wait 统一批量提交 */
+    if (coco_global_get() != NULL) {
+        io_uring_submit(&iou->ring);
+    }
     coco_yield();
 
     ssize_t result = req->result;
@@ -550,8 +557,10 @@ ssize_t coco_file_write(int fd, const void *buf, size_t count) {
 
     atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
-    /* 提交并等待 */
-    io_uring_submit(&iou->ring);
+    /* 提交并等待 — 多线程模式需立即提交，单线程模式由 poll_wait 统一批量提交 */
+    if (coco_global_get() != NULL) {
+        io_uring_submit(&iou->ring);
+    }
     coco_yield();
 
     ssize_t result = req->result;
@@ -596,8 +605,10 @@ int coco_file_close(int fd) {
 
     atomic_store_explicit(&coro->state, COCO_STATE_WAITING, memory_order_release);
 
-    /* 提交并等待 */
-    io_uring_submit(&iou->ring);
+    /* 提交并等待 — 多线程模式需立即提交，单线程模式由 poll_wait 统一批量提交 */
+    if (coco_global_get() != NULL) {
+        io_uring_submit(&iou->ring);
+    }
     coco_yield();
 
     int result = (int)req->result;
