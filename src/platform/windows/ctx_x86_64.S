@@ -143,3 +143,5 @@ coco_x86_64_trampoline:
     mov     rax, [rsp + 8]        ; entry 函数地址
     add     rsp, 16               ; 清理栈帧
     jmp     rax                   ; 跳转到 entry(rcx=arg)
+
+.section .note.GNU-stack,"",@progbits

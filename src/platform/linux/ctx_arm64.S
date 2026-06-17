@@ -41,6 +41,8 @@ coco_ctx_save:
     mov     x0, #0
     ret
 
+.section .note.GNU-stack,"",@progbits
+
 /**
  * coco_ctx_load - 切换到目标上下文
  * 输入: x0 = coco_ctx_t* (目标上下文)

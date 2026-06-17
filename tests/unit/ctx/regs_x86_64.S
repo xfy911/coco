@@ -48,3 +48,5 @@ SYM(set_callee_saved):
     mov %r8, %r14
     mov %r9, %r15
     ret
+
+.section .note.GNU-stack,"",@progbits

@@ -90,3 +90,5 @@ coco_x86_64_trampoline:
     movq 8(%rsp), %rax      # entry 函数地址
     addq $16, %rsp          # 清理栈帧
     jmp *%rax               # 跳转到 entry(rdi=arg)
+
+.section .note.GNU-stack,"",@progbits

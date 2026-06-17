@@ -68,6 +68,8 @@ _coco_ctx_load:
     mov     x0, #1
     ret
 
+.section .note.GNU-stack,"",@progbits
+
 /**
  * _coco_ctx_switch - 同时保存当前并切换到目标
  * 输入: x0 = current_ctx*, x1 = target_ctx*
